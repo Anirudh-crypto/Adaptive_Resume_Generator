@@ -14,6 +14,7 @@ existing test imports ``app.main`` at all.
 
 from __future__ import annotations
 
+import datetime
 import io
 import uuid
 from pathlib import Path
@@ -49,8 +50,10 @@ class FakeDb:
         self.photos: dict[str, bytes] = {}
         self.photo_content_types: dict[str, str] = {}
         self.jobs: dict[str, dict] = {}
-        self.usage: dict[str, int] = {}
         self.documents: dict[str, bytes] = {}
+        # Mirrors the generation_events table: one row per claimed slot, not a counter. Keeping the
+        # same shape is what lets these tests exercise window expiry and refunds truthfully.
+        self.generation_events: list[dict] = []
 
     # --- resume ---------------------------------------------------------------------------
 
@@ -115,14 +118,62 @@ class FakeDb:
         # quietly write into our stored state.
         return dict(job)
 
-    # --- usage ----------------------------------------------------------------------------
+    # --- rate limit slots -------------------------------------------------------------------
 
-    def get_daily_usage(self, user_id: str) -> int:
-        return self.usage.get(user_id, 0)
+    def _events_in_window(self, user_id: str, window_hours: int) -> list[dict]:
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=window_hours)
+        return sorted(
+            (
+                event
+                for event in self.generation_events
+                if event["user_id"] == user_id and event["created_at"] > cutoff
+            ),
+            key=lambda event: event["created_at"],
+        )
 
-    def increment_usage(self, user_id: str) -> int:
-        self.usage[user_id] = self.usage.get(user_id, 0) + 1
-        return self.usage[user_id]
+    def claim_generation_slot(self, user_id: str, limit: int, window_hours: int) -> str | None:
+        if len(self._events_in_window(user_id, window_hours)) >= limit:
+            return None
+        event = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "created_at": datetime.datetime.now(datetime.UTC),
+        }
+        self.generation_events.append(event)
+        return event["id"]
+
+    def release_generation_slot(self, event_id: str) -> None:
+        # Idempotent, like the real DELETE: releasing twice must not free an extra slot.
+        self.generation_events = [e for e in self.generation_events if e["id"] != event_id]
+
+    def get_usage(self, user_id: str, limit: int, window_hours: int) -> dict:
+        events = self._events_in_window(user_id, window_hours)
+        next_reset_at = None
+        if events:
+            oldest = events[0]["created_at"]
+            next_reset_at = (oldest + datetime.timedelta(hours=window_hours)).isoformat()
+        return {
+            "used": len(events),
+            "limit": limit,
+            "remaining": max(limit - len(events), 0),
+            "next_reset_at": next_reset_at,
+        }
+
+    # --- test helpers -----------------------------------------------------------------------
+
+    def fill_slots(self, user_id: str, count: int, *, age_hours: float = 0.0) -> list[str]:
+        """Pre-load claimed slots, optionally backdated so window-expiry can be tested without
+        actually waiting five hours."""
+        created_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=age_hours)
+        ids = []
+        for _ in range(count):
+            event = {"id": str(uuid.uuid4()), "user_id": user_id, "created_at": created_at}
+            self.generation_events.append(event)
+            ids.append(event["id"])
+        return ids
+
+    def slots_used(self, user_id: str, window_hours: int = 5) -> int:
+        return len(self._events_in_window(user_id, window_hours))
 
 
 _DB_FUNCTIONS = (
@@ -136,8 +187,9 @@ _DB_FUNCTIONS = (
     "create_job",
     "update_job",
     "get_job",
-    "get_daily_usage",
-    "increment_usage",
+    "claim_generation_slot",
+    "release_generation_slot",
+    "get_usage",
 )
 
 

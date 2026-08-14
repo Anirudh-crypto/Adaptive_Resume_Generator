@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from app.latex_render import latex_escape, render_resume_latex
+import pytest
+
+from app.latex_render import LAYOUTS, latex_escape, render_resume_latex
 from app.resume_parser import parse_resume
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_resume.md"
@@ -44,3 +46,40 @@ def test_render_with_photo_includes_includegraphics():
     tex = render_resume_latex(resume, has_photo=True)
     assert "\\includegraphics" in tex
     assert "pic.JPG" in tex
+
+
+# --- regional layouts ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("region", sorted(LAYOUTS))
+def test_every_layout_renders_the_fixture(region):
+    resume = parse_resume(FIXTURE)
+    tex = render_resume_latex(resume, region=region)
+    assert "\\documentclass" in tex
+    assert "\\end{document}" in tex
+    assert "Jane Doe" in tex
+    # The escaping contract holds in every layout, not just the default one.
+    assert "p99 latency by 30\\%" in tex
+
+
+def test_indian_layout_never_includes_a_photo():
+    """has_photo is forced True here on purpose: the guarantee has to come from the template
+    itself, not from the caller remembering to pass has_photo=False."""
+    resume = parse_resume(FIXTURE)
+    tex = render_resume_latex(resume, has_photo=True, region="india")
+    assert "\\includegraphics" not in tex
+    assert "pic.JPG" not in tex
+
+
+def test_layouts_declare_whether_they_support_a_photo():
+    assert LAYOUTS["germany"].supports_photo is True
+    assert LAYOUTS["india"].supports_photo is False
+
+
+@pytest.mark.parametrize("region", ["france", "", "resume.tex.jinja", "../../etc/passwd"])
+def test_unknown_region_is_rejected_before_touching_the_filesystem(region):
+    """The Jinja loader is pointed at the whole latex_templates/ directory, so resolving a
+    caller-supplied name would be an arbitrary file read."""
+    resume = parse_resume(FIXTURE)
+    with pytest.raises(ValueError, match="Unknown resume region"):
+        render_resume_latex(resume, region=region)

@@ -312,6 +312,82 @@ input[type="file"] {
   min-height: 1.2em;
 }
 
+/* Job-location picker. The app has no other radio/checkbox/select, so this is the whole
+   convention: a bare fieldset (default border and padding stripped) laid out as a row. */
+.region-group {
+  border: 0;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+}
+
+.region-group legend {
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.region-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.region-option input[type="radio"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.region-option input[type="radio"]:disabled,
+.region-option:has(input[type="radio"]:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.region-option small {
+  color: var(--muted);
+}
+
+/* Remaining-generations badge. Fixed to the top-right corner, offset far enough down that it
+   clears the nav row rather than covering the sign-out button. */
+.usage-badge {
+  position: fixed;
+  top: 4.6rem;
+  right: 1rem;
+  z-index: 10;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--muted);
+  font-size: 0.82rem;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
+}
+
+.usage-badge.exhausted {
+  border-color: var(--error-fg);
+  background: var(--error-bg);
+  color: var(--error-fg);
+}
+
+/* Below this width the nav wraps onto two lines and a fixed badge would sit on top of it. Drop it
+   back into normal flow instead, where it can't overlap anything. */
+@media (max-width: 640px) {
+  .usage-badge {
+    position: static;
+    display: block;
+    margin: 0 auto 0.8rem;
+    width: fit-content;
+  }
+}
+
 #resume-md {
   margin-top: 1rem;
 }

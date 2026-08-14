@@ -1,0 +1,136 @@
+\#{ ------------------------------------------------------------------------------------------ }
+\#{ Indian-market resume layout.                                                                 }
+\#{                                                                                              }
+\#{ NOTE: a Jinja comment here runs from the opening delimiter to the very next closing brace, so }
+\#{ no comment line in this file may contain a brace of either kind. One inside a comment ends it }
+\#{ early and dumps the rest of the prose into the document before the documentclass line, which  }
+\#{ surfaces as the baffling "LaTeX Error: Missing begin document".                               }
+\#{                                                                                              }
+\#{ STARTER TEMPLATE -- derived from resume.tex.jinja so the feature works end to end. Replace    }
+\#{ the body with your own .tex when you have it, keeping the three rules below intact.           }
+\#{                                                                                              }
+\#{ 1. No photograph. Indian resumes conventionally omit one, and app/latex_render.py declares    }
+\#{    this layout with supports_photo=False, so has_photo is always False here and there is no   }
+\#{    includegraphics call. Do not add one without flipping that flag, or the image file is      }
+\#{    never written into the compile directory and the build fails.                              }
+\#{                                                                                              }
+\#{ 2. Escaping is split. name, summary and every per-entry field must go through latex_escape    }
+\#{    HERE, in the template. But header_location, header_line2, header_linkedin, header_website  }
+\#{    and languages_line are emitted RAW -- _build_header_fields in app/latex_render.py has      }
+\#{    already escaped them and wrapped them in hyperlink markup. Escaping those a second time    }
+\#{    prints the backslashes; forgetting to escape the others lets a stray ampersand or percent  }
+\#{    sign in someone's resume break the build.                                                  }
+\#{                                                                                              }
+\#{ 3. The preamble matches resume.tex.jinja exactly, and latex_templates/prewarm.tex pre-warms   }
+\#{    Tectonic's bundle cache with those same packages during the Docker build. Adding a package }
+\#{    here means adding it to prewarm.tex too, or the first compile in production pays a         }
+\#{    download -- and fails outright if egress is blocked.                                       }
+\#{                                                                                              }
+\#{ Section order differs from the German layout: Education sits above Experience, the usual      }
+\#{ convention for Indian resumes, and Projects moves below Experience.                           }
+\#{ ------------------------------------------------------------------------------------------ }
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper,margin=1.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\pagestyle{empty}
+
+\definecolor{accent}{HTML}{1F77B4}
+
+\setlength{\parindent}{0pt}
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}[\titlerule]
+
+\begin{document}
+
+\#{ Header spans the full width -- there is no photo minipage to make room for. }
+\begin{center}
+{\Huge \textbf{\VAR{name | latex_escape}}}\\[6pt]
+\BLOCK{ if header_location }
+\VAR{header_location}\\[2pt]
+\BLOCK{ endif }
+\BLOCK{ if header_line2 }
+\VAR{header_line2}\\[2pt]
+\BLOCK{ endif }
+\BLOCK{ if header_linkedin }
+\VAR{header_linkedin}\BLOCK{ if header_website } \quad | \quad \VAR{header_website}\BLOCK{ endif }
+\BLOCK{ elif header_website }
+\VAR{header_website}
+\BLOCK{ endif }
+\end{center}
+
+\vspace{0.3cm}
+\hrule
+
+\BLOCK{ if summary }
+\section{Professional Summary}
+\VAR{summary | latex_escape}
+\BLOCK{ endif }
+
+\BLOCK{ if skill_categories }
+\section*{Technical Skills}
+\BLOCK{ for cat in skill_categories }
+\BLOCK{ if cat.category }\textbf{\VAR{cat.category | latex_escape}:} \BLOCK{ endif }\VAR{cat['items'] | join(', ') | latex_escape} \\
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if education }
+\section*{Education}
+\BLOCK{ for entry in education }
+\textbf{\VAR{entry.institution | latex_escape}} \hfill \VAR{entry.dates | latex_escape}\\
+\VAR{entry.degree | latex_escape}\BLOCK{ if entry.location }, \VAR{entry.location | latex_escape}\BLOCK{ endif }
+\BLOCK{ if not loop.last }
+\\[3pt]\\
+\BLOCK{ endif }
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if experience }
+\section*{Work Experience}
+\BLOCK{ for entry in experience }
+\textbf{\VAR{entry.title | latex_escape}\BLOCK{ if entry.organization } | \VAR{entry.organization | latex_escape}\BLOCK{ endif }} \hfill \VAR{entry.dates | latex_escape}\BLOCK{ if entry.location }\\
+\textit{\VAR{entry.location | latex_escape}}\BLOCK{ endif }
+\begin{itemize}[leftmargin=1.2em]
+\BLOCK{ for bullet in entry.bullets }
+\item \VAR{bullet | latex_escape}
+\BLOCK{ endfor }
+\end{itemize}
+\BLOCK{ if entry.technologies }
+\textit{Technologies: \VAR{entry.technologies | join(', ') | latex_escape}}
+\BLOCK{ endif }
+\BLOCK{ if not loop.last }
+\newline
+\newline
+\BLOCK{ endif }
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if projects }
+\section*{Projects}
+\BLOCK{ for entry in projects }
+\textbf{\VAR{entry.name | latex_escape}}\BLOCK{ if entry.link } -- \href{\VAR{entry.link}}{\VAR{entry.link | latex_escape}}\BLOCK{ endif } \hfill \VAR{entry.dates | latex_escape}
+\begin{itemize}[leftmargin=1.2em]
+\BLOCK{ for bullet in entry.bullets }
+\item \VAR{bullet | latex_escape}
+\BLOCK{ endfor }
+\end{itemize}
+\BLOCK{ if entry.technologies }
+\textit{Technologies: \VAR{entry.technologies | join(', ') | latex_escape}}
+\BLOCK{ endif }
+\BLOCK{ if not loop.last }
+\newline
+\newline
+\BLOCK{ endif }
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if languages_line }
+\section*{Languages}
+\VAR{languages_line}
+\BLOCK{ endif }
+
+\end{document}

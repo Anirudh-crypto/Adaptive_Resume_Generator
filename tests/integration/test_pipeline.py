@@ -27,12 +27,23 @@ pytestmark = pytest.mark.integration
 JOB_DESCRIPTION = "Senior Backend Engineer working on distributed systems in Python."
 
 
-def run_pipeline(fake_db, *, resume_markdown: str | None = SAMPLE_RESUME_MD) -> dict:
-    """Create a job, run the pipeline to completion, and return the final job row."""
+def run_pipeline(
+    fake_db,
+    *,
+    resume_markdown: str | None = SAMPLE_RESUME_MD,
+    region: str = "germany",
+    claim_slot: bool = True,
+) -> dict:
+    """Create a job, run the pipeline to completion, and return the final job row.
+
+    Claims a real rate-limit slot first, mirroring what POST /generate does, so the tests can assert
+    whether a given outcome gives that slot back.
+    """
     if resume_markdown is not None:
         fake_db.resumes[TEST_USER] = resume_markdown
+    event_id = fake_db.claim_generation_slot(TEST_USER, 5, 5) if claim_slot else None
     job_id = fake_db.create_job(TEST_USER)
-    app_main._run_pipeline(job_id, TEST_USER, JOB_DESCRIPTION)
+    app_main._run_pipeline(job_id, TEST_USER, JOB_DESCRIPTION, region, event_id)
     return fake_db.jobs[job_id]
 
 
@@ -72,6 +83,35 @@ def test_pipeline_embeds_the_photo_when_one_is_saved(fake_db, stub_gemini, jpeg_
 
     assert job["status"] == "done"
     assert fake_db.documents[job["pdf_storage_path"]][:4] == b"%PDF"
+
+
+@pytest.mark.tectonic
+def test_indian_layout_compiles_without_the_photo(fake_db, stub_gemini, jpeg_bytes):
+    """Even with a photo saved, the Indian layout must not receive it: that layout has no
+    \\includegraphics, so shipping the bytes would put an unreferenced file in the compile dir."""
+    fake_db.photos[TEST_USER] = jpeg_bytes
+    job = run_pipeline(fake_db, region="india")
+
+    assert job["status"] == "done"
+    assert fake_db.documents[job["pdf_storage_path"]][:4] == b"%PDF"
+
+
+def test_photo_resources_follow_the_layout(fake_db, stub_gemini, jpeg_bytes, monkeypatch):
+    """Asserts the resource dict directly, so this stays meaningful without a LaTeX toolchain."""
+    seen: dict[str, dict] = {}
+
+    def capture(tex_source, settings, resources=None):
+        seen["resources"] = resources or {}
+        return b"%PDF-fake"
+
+    monkeypatch.setattr(app_main, "compile_pdf", capture)
+    fake_db.photos[TEST_USER] = jpeg_bytes
+
+    run_pipeline(fake_db, region="india")
+    assert seen["resources"] == {}
+
+    run_pipeline(fake_db, region="germany")
+    assert list(seen["resources"]) == ["pic.JPG"]
 
 
 @pytest.mark.tectonic
@@ -144,7 +184,7 @@ def test_pipeline_attaches_the_log_when_latex_fails(fake_db, stub_gemini, monkey
     monkeypatch.setattr(
         app_main,
         "render_resume_latex",
-        lambda resume, has_photo=False: (
+        lambda resume, has_photo=False, region="germany": (
             r"\documentclass{article}\begin{document}\undefinedcommand\end{document}"
         ),
     )
@@ -152,6 +192,84 @@ def test_pipeline_attaches_the_log_when_latex_fails(fake_db, stub_gemini, monkey
 
     assert job["status"] == "error"
     assert "Undefined control sequence" in job["error_detail"]
+
+
+# --- rate-limit slot accounting --------------------------------------------------------------
+#
+# The regression guard for the reported bug: a Gemini 503 used to leave the generation charged even
+# though the user got nothing back.
+
+
+@pytest.mark.tectonic
+def test_a_successful_generation_keeps_its_slot(fake_db, stub_gemini):
+    run_pipeline(fake_db)
+    assert fake_db.slots_used(TEST_USER) == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "setup"),
+    [
+        # No resume saved -- fails before any model call is even made.
+        ("no resume", lambda mp: None),
+        (
+            "tailoring mismatch",
+            lambda mp: mp.setattr(
+                app_main,
+                "tailor_resume",
+                lambda r, j, s: (_ for _ in ()).throw(TailoringMismatchError("bad shape")),
+            ),
+        ),
+        (
+            "model overloaded",
+            lambda mp: mp.setattr(
+                app_main,
+                "tailor_resume",
+                lambda r, j, s: (_ for _ in ()).throw(RuntimeError("503 UNAVAILABLE")),
+            ),
+        ),
+    ],
+)
+def test_a_failed_generation_gives_its_slot_back(fake_db, stub_gemini, monkeypatch, name, setup):
+    setup(monkeypatch)
+    resume = None if name == "no resume" else SAMPLE_RESUME_MD
+    job = run_pipeline(fake_db, resume_markdown=resume if resume else "")
+
+    assert job["status"] == "error", name
+    assert fake_db.slots_used(TEST_USER) == 0, f"{name} should not cost a generation"
+
+
+@pytest.mark.tectonic
+def test_a_latex_failure_gives_its_slot_back(fake_db, stub_gemini, monkeypatch):
+    monkeypatch.setattr(
+        app_main,
+        "render_resume_latex",
+        lambda resume, has_photo=False, region="germany": (
+            r"\documentclass{article}\begin{document}\undefinedcommand\end{document}"
+        ),
+    )
+    job = run_pipeline(fake_db)
+
+    assert job["status"] == "error"
+    assert fake_db.slots_used(TEST_USER) == 0
+
+
+def test_a_release_failure_does_not_mask_the_original_error(fake_db, stub_gemini, monkeypatch):
+    """The refund runs inside an exception handler that has already recorded why the job died.
+    If the refund itself explodes, that diagnosis must survive."""
+    monkeypatch.setattr(
+        app_main,
+        "tailor_resume",
+        lambda r, j, s: (_ for _ in ()).throw(RuntimeError("503 UNAVAILABLE")),
+    )
+
+    def boom(event_id):
+        raise RuntimeError("supabase unreachable")
+
+    monkeypatch.setattr(app_db, "release_generation_slot", boom)
+
+    job = run_pipeline(fake_db)
+    assert job["status"] == "error"
+    assert "503 UNAVAILABLE" in job["error"]
 
 
 @pytest.mark.tectonic
@@ -170,3 +288,5 @@ def test_a_failed_cover_letter_does_not_sink_the_resume(fake_db, stub_gemini, mo
     assert fake_db.documents[job["pdf_storage_path"]][:4] == b"%PDF"
     assert job["cover_letter_storage_path"] is None
     assert "model refused" in job["cover_letter_error"]
+    # Deliberately still charged: the resume PDF -- the thing they asked for -- was delivered.
+    assert fake_db.slots_used(TEST_USER) == 1

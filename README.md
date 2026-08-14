@@ -36,9 +36,11 @@ result card rather than failing the whole job.
   and cover letter `.docx` files alike), accessed server-side via the service_role key
   (`app/db.py`). Job/progress state lives in the database, not in-process memory, so it's correct
   under Cloud Run's multi-instance autoscaling.
-- **Tailoring + cover letter**: Google Gemini, one shared API key, with a per-user daily generation
-  limit (`DAILY_GENERATION_LIMIT`) to protect the shared free-tier quota. One generation = one
-  tailoring call (`app/tailor.py`) + one cover letter call (`app/cover_letter.py`).
+- **Tailoring + cover letter**: Google Gemini, one shared API key, with a per-user sliding-window
+  rate limit (`GENERATION_LIMIT` in any rolling `GENERATION_WINDOW_HOURS`) to protect the shared
+  free-tier quota. One generation = one tailoring call (`app/tailor.py`) + one cover letter call
+  (`app/cover_letter.py`). A generation that fails gives its slot back, so a Gemini outage doesn't
+  cost the user anything.
 - **PDF compiling**: Tectonic, invoked in-process (`app/compile_service.py`) — no separate service.
 - **DOCX writing**: `python-docx`, in-process (`app/docx_render.py`) — no Word/LibreOffice needed.
 - **Hosting**: designed for Google Cloud Run's always-free tier (scales to zero, no time-boxed
@@ -111,7 +113,7 @@ gcloud run deploy resume-builder \
   --region REGION --allow-unauthenticated \
   --no-cpu-throttling \
   --min-instances=0 --max-instances=2 --memory=512Mi --cpu=1 \
-  --set-env-vars "SUPABASE_URL=https://xxxx.supabase.co,SUPABASE_ANON_KEY=your-anon-key,GEMINI_MODEL=gemini-3.5-flash,DAILY_GENERATION_LIMIT=5,PHOTO_BUCKET=photo,PDF_BUCKET=resume-pdf" \
+  --set-env-vars "SUPABASE_URL=https://xxxx.supabase.co,SUPABASE_ANON_KEY=your-anon-key,GEMINI_MODEL=gemini-3.5-flash,GENERATION_LIMIT=5,GENERATION_WINDOW_HOURS=5,PHOTO_BUCKET=photo,PDF_BUCKET=resume-pdf" \
   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest"
 ```
 

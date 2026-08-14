@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.gemini import build_client
 from app.models import Resume
 
 SYSTEM_PROMPT = """You are helping a job applicant tailor their resume to a specific job description.
@@ -79,7 +79,7 @@ following the rules given in the system instructions."""
 
 
 def tailor_resume(resume: Resume, jd_text: str, settings: Settings) -> Resume:
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = build_client(settings)
     response = client.models.generate_content(
         model=settings.gemini_model,
         contents=_build_prompt(resume, jd_text),

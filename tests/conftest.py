@@ -29,7 +29,8 @@ _HERMETIC_ENV = {
     "GEMINI_MODEL": "gemini-3.5-flash",
     "PHOTO_BUCKET": "photo",
     "PDF_BUCKET": "resume-pdf",
-    "DAILY_GENERATION_LIMIT": "5",
+    "GENERATION_LIMIT": "5",
+    "GENERATION_WINDOW_HOURS": "5",
 }
 
 for _key, _value in _HERMETIC_ENV.items():

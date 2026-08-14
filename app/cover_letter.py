@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 
-from google import genai
 from google.genai import types
 
 from app.config import Settings
+from app.gemini import build_client
 from app.models import CoverLetter, Resume
 
 SYSTEM_PROMPT = """You are writing a cover letter for a job applicant, based on their resume (which
@@ -140,7 +140,7 @@ def _clean(letter: CoverLetter) -> CoverLetter:
 
 
 def generate_cover_letter(resume: Resume, jd_text: str, settings: Settings) -> CoverLetter:
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = build_client(settings)
     response = client.models.generate_content(
         model=settings.gemini_model,
         contents=_build_prompt(resume, jd_text),

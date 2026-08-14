@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="{{ static_url('style.css') }}" />
 </head>
 <body>
+  <div id="usage-badge" class="usage-badge hidden" aria-live="polite"></div>
+
   <main>
     <nav class="topnav">
       <a href="/" class="topnav-brand">📄 Resume Builder</a>
@@ -30,6 +32,18 @@
       </div>
 
       <textarea id="jd" placeholder="Paste the job description here..." rows="12"></textarea>
+
+      <fieldset id="region-group" class="region-group">
+        <legend>Where is this job?</legend>
+        <label class="region-option">
+          <input type="radio" name="region" value="germany" checked />
+          <span>Germany <small>&mdash; includes your photo</small></span>
+        </label>
+        <label class="region-option">
+          <input type="radio" name="region" value="india" />
+          <span>India <small>&mdash; no photo</small></span>
+        </label>
+      </fieldset>
 
       <button id="generate-btn">Generate Tailored Resume</button>
 

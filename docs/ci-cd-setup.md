@@ -133,7 +133,7 @@ No harm done if it does — nothing gets pushed to Artifact Registry.
 Run the commands `setup-ci.ps1` printed. For reference:
 
 **Variables** (plaintext, visible in public logs): `WIF_PROVIDER`, `APPROVERS`, `GEMINI_MODEL`,
-`DAILY_GENERATION_LIMIT`, `PHOTO_BUCKET`, `PDF_BUCKET`.
+`GENERATION_LIMIT`, `GENERATION_WINDOW_HOURS`, `PHOTO_BUCKET`, `PDF_BUCKET`.
 
 **Secrets** (masked): `SMTP_USERNAME`, `SMTP_PASSWORD`, `NOTIFY_EMAIL`, `SUPABASE_URL`,
 `SUPABASE_ANON_KEY`.

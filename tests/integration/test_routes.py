@@ -215,6 +215,36 @@ def test_import_surfaces_model_failures_as_502(client, monkeypatch):
     assert response.status_code == 502
 
 
+def test_successful_import_consumes_a_slot(client, fake_db, monkeypatch, stub_gemini):
+    monkeypatch.setattr(app_main, "extract_text_from_pdf", lambda file_bytes: "Jane Doe")
+    client.post("/me/resume/import", files={"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")})
+    assert fake_db.slots_used(TEST_USER) == 1
+
+
+def test_import_that_finds_no_text_costs_nothing(client, fake_db, blank_pdf_bytes):
+    """The old behaviour charged before even reading the file, so an unreadable PDF cost a
+    generation. Extracting nothing is exactly the case a user would retry."""
+    response = client.post(
+        "/me/resume/import", files={"file": ("scan.pdf", blank_pdf_bytes, "application/pdf")}
+    )
+    assert response.status_code == 400
+    assert fake_db.slots_used(TEST_USER) == 0
+
+
+def test_import_that_hits_a_model_error_costs_nothing(client, fake_db, monkeypatch):
+    monkeypatch.setattr(app_main, "extract_text_from_pdf", lambda file_bytes: "some text")
+
+    def boom(raw_text, settings):
+        raise RuntimeError("503 UNAVAILABLE. The model is overloaded.")
+
+    monkeypatch.setattr(app_main, "structure_resume_from_text", boom)
+    response = client.post(
+        "/me/resume/import", files={"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")}
+    )
+    assert response.status_code == 502
+    assert fake_db.slots_used(TEST_USER) == 0
+
+
 # --- rate limiting -------------------------------------------------------------------------
 
 
@@ -225,17 +255,79 @@ def test_import_surfaces_model_failures_as_502(client, monkeypatch):
         ("/me/resume/import", {"files": {"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")}}),
     ],
 )
-def test_daily_limit_returns_429(client, fake_db, path, kwargs):
-    fake_db.usage[TEST_USER] = 5  # DAILY_GENERATION_LIMIT in tests/conftest.py
+def test_exhausted_window_returns_429(client, fake_db, path, kwargs):
+    fake_db.fill_slots(TEST_USER, 5)  # GENERATION_LIMIT in tests/conftest.py
     response = client.post(path, **kwargs)
     assert response.status_code == 429
-    assert "Daily limit" in response.json()["error"]
+    error = response.json()["error"]
+    assert "5 generations per 5 hours" in error
+    assert "frees up at" in error
 
 
 def test_generation_below_the_limit_is_allowed(client, fake_db, monkeypatch):
     monkeypatch.setattr(app_main, "_run_pipeline", lambda *args: None)
-    fake_db.usage[TEST_USER] = 4
+    fake_db.fill_slots(TEST_USER, 4)
     assert client.post("/generate", json={"job_description": "Backend role"}).status_code == 202
+
+
+def test_slots_older_than_the_window_do_not_count(client, fake_db, monkeypatch):
+    """The point of a sliding window: capacity returns as individual slots age out."""
+    monkeypatch.setattr(app_main, "_run_pipeline", lambda *args: None)
+    fake_db.fill_slots(TEST_USER, 5, age_hours=6)  # all beyond the 5-hour window
+    assert client.post("/generate", json={"job_description": "Backend role"}).status_code == 202
+
+
+def test_a_released_slot_frees_capacity_immediately(client, fake_db, monkeypatch):
+    monkeypatch.setattr(app_main, "_run_pipeline", lambda *args: None)
+    slot_ids = fake_db.fill_slots(TEST_USER, 5)
+    assert client.post("/generate", json={"job_description": "Backend role"}).status_code == 429
+
+    fake_db.release_generation_slot(slot_ids[0])
+    assert client.post("/generate", json={"job_description": "Backend role"}).status_code == 202
+
+
+def test_releasing_the_same_slot_twice_does_not_grant_extra_capacity(client, fake_db, monkeypatch):
+    """Guards the idempotency the DELETE-based refund relies on."""
+    monkeypatch.setattr(app_main, "_run_pipeline", lambda *args: None)
+    slot_ids = fake_db.fill_slots(TEST_USER, 5)
+
+    fake_db.release_generation_slot(slot_ids[0])
+    fake_db.release_generation_slot(slot_ids[0])
+
+    assert fake_db.slots_used(TEST_USER) == 4
+
+
+# --- usage endpoint ------------------------------------------------------------------------
+
+
+def test_usage_reports_remaining_slots(client, fake_db):
+    assert client.get("/me/usage").json() == {
+        "used": 0,
+        "limit": 5,
+        "remaining": 5,
+        "next_reset_at": None,
+    }
+
+    fake_db.fill_slots(TEST_USER, 2)
+    body = client.get("/me/usage").json()
+    assert body["used"] == 2
+    assert body["remaining"] == 3
+    assert body["next_reset_at"] is not None
+
+
+def test_usage_never_reports_negative_remaining(client, fake_db):
+    """A hand-edited row or a race could push usage past the limit; the UI must not show "-1"."""
+    fake_db.fill_slots(TEST_USER, 7)
+    body = client.get("/me/usage").json()
+    assert body["used"] == 7
+    assert body["remaining"] == 0
+
+
+def test_usage_ignores_other_users(client, fake_db):
+    from .conftest import OTHER_USER
+
+    fake_db.fill_slots(OTHER_USER, 5)
+    assert client.get("/me/usage").json()["remaining"] == 5
 
 
 # --- generate and job status ---------------------------------------------------------------
@@ -257,7 +349,9 @@ def test_generate_creates_a_job_and_charges_usage(client, fake_db, monkeypatch):
     # asserting them cannot race the background work.
     assert job_id in fake_db.jobs
     assert fake_db.jobs[job_id]["user_id"] == TEST_USER
-    assert fake_db.usage[TEST_USER] == 1
+    assert fake_db.slots_used(TEST_USER) == 1
+    # The claimed slot is handed to the pipeline so it can be released if the job fails.
+    assert started[0][4] is not None
 
 
 @pytest.mark.parametrize("description", ["", "   ", "\n\t"])
@@ -266,7 +360,36 @@ def test_generate_rejects_an_empty_job_description(client, fake_db, description)
     assert response.status_code == 400
     assert response.json()["error"] == "Job description is empty"
     # Rejected before any quota is spent.
-    assert fake_db.usage == {}
+    assert fake_db.generation_events == []
+
+
+# --- region selection ----------------------------------------------------------------------
+
+
+def test_generate_defaults_to_the_german_layout(client, fake_db, monkeypatch):
+    started: list[tuple] = []
+    monkeypatch.setattr(app_main, "_run_pipeline", lambda *args: started.append(args))
+
+    client.post("/generate", json={"job_description": "Backend role"})
+    assert started[0][3] == "germany"
+
+
+def test_generate_passes_the_requested_region(client, fake_db, monkeypatch):
+    started: list[tuple] = []
+    monkeypatch.setattr(app_main, "_run_pipeline", lambda *args: started.append(args))
+
+    client.post("/generate", json={"job_description": "Backend role", "region": "india"})
+    assert started[0][3] == "india"
+
+
+@pytest.mark.parametrize("region", ["france", "", "resume.tex.jinja", "../etc/passwd"])
+def test_generate_rejects_an_unknown_region(client, fake_db, region):
+    """The Literal keeps caller-controlled text away from the Jinja template loader."""
+    response = client.post(
+        "/generate", json={"job_description": "Backend role", "region": region}
+    )
+    assert response.status_code == 422
+    assert fake_db.generation_events == []
 
 
 def test_job_status_404s_for_an_unknown_id(client):
