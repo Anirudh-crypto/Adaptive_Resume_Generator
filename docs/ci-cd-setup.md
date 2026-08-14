@@ -164,11 +164,35 @@ Settings → Actions → General:
 
 Settings → General → Pull Requests: enable **Allow auto-merge**.
 
-## Step 7 — Prove Stage 1 works, on a branch
+## Step 7 — First push (bootstrap)
+
+**Only for the very first push, into an empty repo.** GitHub makes the first branch it receives
+the default branch, so `main` has to go first — pushing a feature branch into an empty repo leaves
+you with that branch as your default:
 
 ```bash
-git checkout -b feat/ci
-git push -u origin feat/ci
+git checkout main
+git push -u origin main
+```
+
+There's a chicken-and-egg problem here worth naming: this push puts the workflows on `main`
+without them ever having passed Stage 1, because until they exist there is nothing to run. That's
+unavoidable and fine.
+
+It does mean **`deploy.yml` fires immediately**. If steps 4–6 are done, that's a real Stage 2 run
+and it will stop at the approval issue without touching production. If they aren't, the run fails
+at the `google-github-actions/auth` step — harmless, nothing reaches Artifact Registry, and no
+traffic moves. Doing steps 4–6 first is simply less noisy.
+
+## Step 7b — Prove Stage 1 works, on a branch
+
+From here on, every change goes through a branch. This is the normal loop:
+
+```bash
+git checkout -b feat/some-change
+# ... edit ...
+git commit -am "..."
+git push -u origin feat/some-change
 gh pr create --fill
 ```
 
