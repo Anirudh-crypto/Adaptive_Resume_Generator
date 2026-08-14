@@ -1,0 +1,36 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+client_secret_*.json
+*.pem
+*.key
+.claude/settings.local.json
+
+# The owner's real resume and photograph. This repository is public.
+# tests/ generates its own neutral fixtures instead of reading from here.
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+reports/
+*.egg-info/
+
+# Local tooling / build output
+.tools/
+output/*.pdf
+output/*.tex
+!output/.gitkeep
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

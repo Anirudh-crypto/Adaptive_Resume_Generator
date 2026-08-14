@@ -1,0 +1,21 @@
+.venv/
+.tools/
+output/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+.git/
+.github/
+.claude/
+data/
+
+# The image copies only latex_templates/, requirements.txt and app/. Excluding the test suite
+# keeps the build context small and guarantees no test code can reach a production image.
+# (This became safe once the Tectonic prewarm stopped reading tests/fixtures/sample_resume.md
+# and used the static latex_templates/prewarm.tex instead -- adding tests/ here before that
+# change would have broken the build.)
+tests/
+requirements-dev.txt
+reports/

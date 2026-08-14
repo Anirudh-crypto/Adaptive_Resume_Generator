@@ -1,0 +1,39 @@
+# Keeps the free-tier Supabase project from auto-pausing after 7 days without traffic.
+#
+# This is the FALLBACK. The primary mechanism is a Cloud Scheduler job (see
+# docs/ci-cd-setup.md), because GitHub silently disables `schedule:` workflows after 60 days of
+# repository inactivity -- which is exactly the situation a keepalive exists to survive. Both are
+# free; running both is reasonable.
+name: keepalive
+
+on:
+  schedule:
+    - cron: "17 6 */2 * *" # every other day at 06:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # This hits Supabase's PostgREST API directly rather than the app's /health endpoint.
+      # GET /health does NOT count as database traffic -- it only shutil.which()es the Tectonic
+      # binary and never opens a connection to Postgres, so pinging it would leave the project
+      # to pause anyway.
+      #
+      # Cloud Run is deliberately NOT pinged: it never auto-pauses, and because the service runs
+      # with --no-cpu-throttling every wake-up bills roughly 15 minutes of instance time against
+      # the free tier for no benefit.
+      #
+      # Under RLS this returns `200 []` for an anonymous caller -- a real query, zero data.
+      - name: Touch the Supabase database
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          curl -fsS -o /dev/null -w 'PostgREST responded HTTP %{http_code}\n' \
+            -H "apikey: ${ANON_KEY}" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            "${SUPABASE_URL}/rest/v1/resumes?select=user_id&limit=1"

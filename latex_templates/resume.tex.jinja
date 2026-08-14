@@ -1,0 +1,111 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper,margin=1.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\pagestyle{empty}
+
+\definecolor{accent}{HTML}{1F77B4}
+
+\setlength{\parindent}{0pt}
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}[\titlerule]
+
+\begin{document}
+
+% Header
+\begin{minipage}[t]{\BLOCK{ if has_photo }0.72\BLOCK{ else }0.98\BLOCK{ endif }\textwidth}
+{\Huge \textbf{\VAR{name | latex_escape}}}\\[4pt]
+\BLOCK{ if header_location }
+\VAR{header_location}\\[2pt]
+\BLOCK{ endif }
+\BLOCK{ if header_line2 }
+\VAR{header_line2}\\[2pt]
+\BLOCK{ endif }
+\BLOCK{ if header_linkedin }
+\VAR{header_linkedin} \\
+\BLOCK{ endif }
+\BLOCK{ if header_website }
+\VAR{header_website}
+\BLOCK{ endif }
+\end{minipage}
+\BLOCK{ if has_photo }
+\hfill
+\begin{minipage}[t]{0.22\textwidth}
+\includegraphics[width=\linewidth]{pic.JPG}
+\end{minipage}
+\BLOCK{ endif }
+
+\vspace{0.3cm}
+\hrule
+
+\BLOCK{ if summary }
+\section{Professional Summary}
+\VAR{summary | latex_escape}
+\BLOCK{ endif }
+
+\BLOCK{ if skill_categories }
+\section*{Technical Skills}
+\BLOCK{ for cat in skill_categories }
+\BLOCK{ if cat.category }\textbf{\VAR{cat.category | latex_escape}:} \BLOCK{ endif }\VAR{cat['items'] | join(', ') | latex_escape} \\
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if projects }
+\section*{Projects}
+\BLOCK{ for entry in projects }
+\textbf{\VAR{entry.name | latex_escape}}\BLOCK{ if entry.link } -- \href{\VAR{entry.link}}{\VAR{entry.link | latex_escape}}\BLOCK{ endif } \hfill \VAR{entry.dates | latex_escape}
+\begin{itemize}[leftmargin=1.2em]
+\BLOCK{ for bullet in entry.bullets }
+\item \VAR{bullet | latex_escape}
+\BLOCK{ endfor }
+\end{itemize}
+\BLOCK{ if entry.technologies }
+\textit{Technologies: \VAR{entry.technologies | join(', ') | latex_escape}}
+\BLOCK{ endif }
+\BLOCK{ if not loop.last }
+\newline
+\newline
+\BLOCK{ endif }
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if experience }
+\section*{Work Experience}
+\BLOCK{ for entry in experience }
+\textbf{\VAR{entry.title | latex_escape}\BLOCK{ if entry.organization } | \VAR{entry.organization | latex_escape}\BLOCK{ endif }} \hfill \VAR{entry.dates | latex_escape}
+\begin{itemize}[leftmargin=1.2em]
+\BLOCK{ for bullet in entry.bullets }
+\item \VAR{bullet | latex_escape}
+\BLOCK{ endfor }
+\end{itemize}
+\BLOCK{ if entry.technologies }
+\textit{Technologies: \VAR{entry.technologies | join(', ') | latex_escape}}
+\BLOCK{ endif }
+\BLOCK{ if not loop.last }
+\newline
+\newline
+\BLOCK{ endif }
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if education }
+\section*{Education}
+\BLOCK{ for entry in education }
+\textbf{\VAR{entry.institution | latex_escape}} \hfill \VAR{entry.dates | latex_escape}\\
+\VAR{entry.degree | latex_escape}
+\BLOCK{ if not loop.last }
+\\[3pt]\\
+\BLOCK{ endif }
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if languages_line }
+\section*{Languages}
+\VAR{languages_line}
+\BLOCK{ endif }
+
+\end{document}

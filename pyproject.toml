@@ -1,0 +1,31 @@
+# Tool configuration only. There is deliberately no [project] or [build-system] table: this
+# repo is an application deployed as a container, not a distributable package, and adding those
+# tables would invite a build backend into a project that has no need for one (and would change
+# what `pip install -r requirements.txt` does).
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "tectonic: needs the real Tectonic binary on PATH, plus network access on a cold bundle cache",
+    "integration: drives the FastAPI app through TestClient with in-memory fakes",
+]
+
+[tool.ruff]
+# 120 rather than the more common 100 because the existing code already writes lines up to 112
+# (long f-strings in resume_parser, prompt text in tailor.py). Ruff is advisory in the pipeline,
+# so the value of the lint step comes entirely from a clean baseline -- a permanent backlog of
+# E501s on prose would just train everyone to ignore the report.
+line-length = 120
+target-version = "py313"
+extend-exclude = [".venv", ".tools", "output", "data"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP"]
+ignore = [
+    # FastAPI's entire dependency-injection idiom is function calls in argument defaults --
+    # Depends(), File(...), Header(default=None). Flagging it here would mean flagging every
+    # route in app/main.py for using the framework as designed.
+    "B008",
+]

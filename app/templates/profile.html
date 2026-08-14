@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My Resume &amp; Photo — Resume Builder</title>
+  <link rel="stylesheet" href="{{ static_url('style.css') }}" />
+</head>
+<body>
+  <main>
+    <nav class="topnav">
+      <a href="/" class="topnav-brand">📄 Resume Builder</a>
+      <a href="/" class="topnav-link">Generate</a>
+      <div id="auth-bar" class="auth-bar"></div>
+    </nav>
+
+    <div id="signed-out-notice" class="notice hidden">
+      Sign in above to view and edit your resume and photo.
+    </div>
+
+    <div id="profile-content" class="hidden">
+      <div class="card">
+        <h1>My Resume</h1>
+        <p class="subtitle">
+          Choose your existing resume as a PDF and it's extracted automatically (text below, and
+          your photo too if the PDF has one) — no separate button. Review the result before
+          saving, since automatic extraction isn't always perfect.
+        </p>
+
+        <input type="file" id="pdf-file" accept="application/pdf" />
+        <div id="import-status" class="status-line"></div>
+
+        <textarea id="resume-md" rows="24" placeholder="# Your Name&#10;&#10;Email: ... | Phone: ...&#10;&#10;## Summary&#10;&#10;..."></textarea>
+
+        <div class="button-row">
+          <button id="save-resume-btn">Save</button>
+        </div>
+        <div id="resume-status" class="status-line"></div>
+        <div id="resume-error" class="hidden"></div>
+      </div>
+
+      <div class="card">
+        <h1>My Photo</h1>
+        <p class="subtitle">
+          Shown in the header of your generated resume. Optional. Extracted automatically from
+          your resume PDF above if it has one — or upload/replace it here directly.
+        </p>
+
+        <img id="photo-preview" class="photo-preview hidden" alt="Your photo" />
+        <div id="no-photo-notice" class="notice">No photo uploaded yet.</div>
+
+        <input type="file" id="photo-file" accept="image/*" />
+        <div class="button-row">
+          <button id="upload-photo-btn">Upload Photo</button>
+          <button id="delete-photo-btn" class="secondary-btn">Remove Photo</button>
+        </div>
+        <div id="photo-status" class="status-line"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    window.SUPABASE_URL = "{{ supabase_url }}";
+    window.SUPABASE_ANON_KEY = "{{ supabase_anon_key }}";
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="{{ static_url('auth.js') }}"></script>
+  <script src="{{ static_url('profile.js') }}"></script>
+</body>
+</html>

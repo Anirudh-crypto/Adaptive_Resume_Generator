@@ -1,0 +1,15 @@
+# Development and CI tooling. Deliberately separate from requirements.txt so none of this ends
+# up in the production container image -- the Dockerfile installs only requirements.txt.
+#
+# Install locally with:  ./.venv/Scripts/pip install -r requirements-dev.txt
+#
+# pytest is pinned because it decides whether the suite passes. ruff and pip-audit are left
+# floating on purpose: both are advisory in the pipeline (neither can fail a build), and both
+# improve by picking up new rules and new CVE data, which pinning would freeze out.
+
+-r requirements.txt
+
+pytest==9.1.1
+pytest-cov
+ruff
+pip-audit

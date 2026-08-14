@@ -1,0 +1,127 @@
+# STAGE 1: prove a feature branch is sound before it is allowed into main.
+#
+# This is the workflow branch protection gates on. It never touches GCP, holds no cloud
+# credentials, and cannot deploy anything -- so it is safe to run on pull requests from forks.
+#
+# Both triggers are deliberate: `push` gives feedback on a branch before a PR exists, and
+# `pull_request` produces the check run that branch protection and auto-merge watch. A branch
+# with an open PR therefore runs twice; on a public repo Actions minutes are unlimited, and the
+# alternative is either no pre-PR feedback or no mergeable check.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main] # main is covered by deploy.yml, which calls the same test workflow
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/_test.yml
+
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: local/resume-builder:ci
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+
+      # app/db.py calls create_client() at import time and supabase-py validates the URL against
+      # ^(https?)://.+ -- so these placeholders have to be well-formed URLs or uvicorn dies
+      # during startup and the smoke test fails for entirely the wrong reason.
+      - name: Start container
+        run: |
+          docker run -d --name smoke -p 8080:8080 \
+            -e PORT=8080 \
+            -e GEMINI_API_KEY=ci-dummy \
+            -e SUPABASE_URL=https://ci-dummy.supabase.co \
+            -e SUPABASE_ANON_KEY=ci-dummy \
+            -e SUPABASE_SERVICE_ROLE_KEY=ci-dummy \
+            local/resume-builder:ci
+
+      - name: Smoke test
+        run: bash .github/scripts/smoke.sh http://localhost:8080
+
+      - name: Container logs
+        if: failure()
+        run: docker logs smoke || true
+
+  report:
+    needs: [test, image]
+    # Pull requests from forks get no secrets, by design. Without this guard the mail step would
+    # fail on empty SMTP credentials and redden every outside contributor's PR.
+    if: ${{ always() && github.event.pull_request.head.repo.fork != true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: test-reports
+          path: reports/
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - id: sum
+        run: python .github/scripts/junit_summary.py "reports/junit-*.xml"
+
+      - id: state
+        run: |
+          if [ "${{ needs.test.result }}" = "success" ] \
+          && [ "${{ needs.image.result }}" = "success" ]; then
+            echo "value=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=FAIL" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pinned to a commit SHA, not a tag: this action receives the SMTP password, and a tag can
+      # be repointed at new code by its author at any time.
+      - name: Email the result
+        uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7 # v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from: resume-builder CI <${{ secrets.SMTP_USERNAME }}>
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          subject: "[${{ steps.state.outputs.value }}] ci ${{ github.ref_name }} @ ${{ github.sha }}"
+          html_body: |
+            <h2>Stage 1 &mdash; ${{ steps.state.outputs.value }}</h2>
+            <p>
+              <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">Run #${{ github.run_number }}</a>
+              &middot; ${{ github.event_name }} by ${{ github.actor }}
+              on <code>${{ github.ref_name }}</code>
+            </p>
+            <ul>
+              <li>tests: <b>${{ needs.test.result }}</b> &mdash; ${{ steps.sum.outputs.summary }}</li>
+              <li>image build + smoke test: <b>${{ needs.image.result }}</b></li>
+            </ul>
+            <p>Failed tests: <code>${{ steps.sum.outputs.failed }}</code></p>
+            <p>
+              If this is green, the PR is mergeable. Merging to <code>main</code> starts Stage 2,
+              which re-runs everything against the merge commit and then asks you to approve the
+              production cutover.
+            </p>

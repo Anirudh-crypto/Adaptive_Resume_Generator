@@ -1,0 +1,136 @@
+# Reusable test workflow. Called by both ci.yml (feature branches / PRs) and deploy.yml (main),
+# so the gate that lets a branch merge and the gate that lets a commit deploy are literally the
+# same job definition and cannot drift apart.
+name: test (reusable)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Advisory, never gating. A lint failure is a style opinion; blocking a deploy on one
+      # trains people to ignore the report. The findings still reach the step summary and the
+      # notification email.
+      - name: Ruff
+        id: ruff
+        continue-on-error: true
+        run: ruff check --output-format=github .
+
+      # Tectonic downloads its LaTeX support bundle on first use. Restored with the explicit
+      # restore/save pair rather than the all-in-one actions/cache, because that action's post
+      # step is `if: success()` -- with it, a run with a failing test would never save the
+      # bundle, so every red run would pay the download again.
+      - name: Restore Tectonic bundle cache
+        id: tectonic-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/Tectonic
+          key: tectonic-bundle-v1-${{ hashFiles('latex_templates/**') }}
+          restore-keys: tectonic-bundle-v1-
+
+      - name: Install Tectonic
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
+          sudo mv tectonic /usr/local/bin/tectonic
+          tectonic --version
+
+      - name: Prepare report directory
+        run: |
+          mkdir -p reports
+          coverage erase || true
+
+      # Three lanes, reported separately so the email can say which kind of thing broke. The
+      # marker expressions partition the suite exactly: no test runs twice, none is skipped.
+      #
+      # `!cancelled()` rather than `always()` on the later lanes: a red unit lane should not stop
+      # us finding out whether integration is also broken, but a cancelled run should stop.
+      - name: Unit tests
+        id: unit
+        run: |
+          pytest -m "not integration and not tectonic" \
+            --junitxml=reports/junit-unit.xml --cov=app --cov-append
+
+      - name: Integration tests
+        id: integration
+        if: ${{ !cancelled() }}
+        run: |
+          pytest -m "integration and not tectonic" \
+            --junitxml=reports/junit-integration.xml --cov=app --cov-append
+
+      - name: LaTeX compile tests
+        id: compile
+        if: ${{ !cancelled() }}
+        run: |
+          pytest -m tectonic \
+            --junitxml=reports/junit-tectonic.xml --cov=app --cov-append
+
+      - name: Coverage report
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          coverage report --show-missing
+          coverage xml -o reports/coverage.xml
+
+      - name: Save Tectonic bundle cache
+        if: ${{ !cancelled() && steps.tectonic-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/Tectonic
+          key: tectonic-bundle-v1-${{ hashFiles('latex_templates/**') }}
+
+      # Advisory too: pip-audit goes red on CVEs in transitive dependencies that cannot be fixed
+      # in the same push, and a pipeline that is red for reasons outside the diff stops being
+      # read at all. No `-r requirements.txt`: pip-audit's requirements mode demands exact pins
+      # for every transitive dependency, which this manifest does not carry. Auditing the
+      # environment we just installed covers the transitives anyway.
+      - name: Dependency audit
+        id: audit
+        continue-on-error: true
+        run: pip-audit --strict --desc
+
+      - name: Summarise
+        if: ${{ !cancelled() }}
+        run: python .github/scripts/junit_summary.py "reports/junit-*.xml"
+
+      - name: Advisory step outcomes
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Advisory checks"
+            echo ""
+            echo "- ruff: ${{ steps.ruff.outcome }}"
+            echo "- pip-audit: ${{ steps.audit.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The report job reads this rather than a reusable-workflow output, because reusable
+      # workflow outputs come back empty when the called job fails -- which is precisely the run
+      # where the failure list is wanted in the email.
+      - name: Upload reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
+          retention-days: 7
+          if-no-files-found: warn

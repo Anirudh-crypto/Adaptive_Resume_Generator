@@ -1,0 +1,45 @@
+% Static document used only to pre-warm Tectonic's package bundle cache during the Docker build.
+%
+% It deliberately mirrors the preamble of resume.tex.jinja so that every package the real
+% pipeline needs is already in the image's cache at runtime -- production compiles then need no
+% network access, and cold starts aren't paying for a package download.
+%
+% Keep this preamble in sync with resume.tex.jinja. If a package is added there but not here,
+% the first real compile in production pays a download (and fails outright if egress is blocked).
+%
+% This file is static on purpose: the Dockerfile compiles it *before* copying app/, so an
+% ordinary code change cannot invalidate the ~100MB bundle layer and force it to be rebuilt and
+% re-pushed to Artifact Registry.
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper,margin=1.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\pagestyle{empty}
+
+\definecolor{accent}{HTML}{1F77B4}
+
+\setlength{\parindent}{0pt}
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}[\titlerule]
+
+\begin{document}
+
+\begin{minipage}[t]{0.98\textwidth}
+{\Huge \textbf{Prewarm}}\\[4pt]
+Somewhere, Earth\\[2pt]
++00 000 000 \quad | \quad \href{mailto:prewarm@example.com}{prewarm@example.com}
+\end{minipage}
+
+\section{Section}
+
+Body text exercising the base font encoding.
+
+\begin{itemize}[leftmargin=*, itemsep=2pt, topsep=2pt]
+  \item A bullet, so enumitem's list machinery is loaded.
+\end{itemize}
+
+\end{document}
