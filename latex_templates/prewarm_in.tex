@@ -1,0 +1,113 @@
+% Static document used only to pre-warm Tectonic's package bundle cache during the Docker build.
+%
+% Companion to prewarm.tex. There are two resume layouts with genuinely different preambles, so
+% there are two prewarm files -- one mirroring each. Compiling a single combined document instead
+% would risk the two package sets fighting each other (fullpage and geometry both want the
+% margins), and would break the one-to-one "keep this in sync with that template" rule.
+%
+% This one mirrors resume_in.tex.jinja. Keep the package list identical to it: anything loaded
+% there but missing here gets downloaded on the first real compile in production, which is slow at
+% best and fails outright if egress is blocked.
+%
+% Note what is deliberately absent, matching the template: fontawesome5 (crashes Tectonic with a
+% heap corruption while loading its OTF through the XeTeX helper) and marvosym (unused). The
+% glyphtounicode input is guarded the same way, since it is pdfTeX-only.
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{multicol}
+\usepackage{setspace}
+
+\renewcommand{\baselinestretch}{1.5}
+\setlength{\multicolsep}{-3.0pt}
+\setlength{\columnsep}{-1pt}
+
+\ifdefined\pdfgentounicode
+  \input{glyphtounicode}
+\fi
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\addtolength{\oddsidemargin}{-0.6in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1.19in}
+\addtolength{\topmargin}{-.7in}
+\addtolength{\textheight}{1.4in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large\bfseries
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+\ifdefined\pdfgentounicode
+  \pdfgentounicode=1
+\fi
+
+\renewcommand\labelitemi{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+% Every size/series/shape this template can reach -- see the equivalent note in prewarm.tex.
+% Tectonic fetches font metrics lazily and separately from .sty files, so loading the packages is
+% not enough: the tiny bullet inside resumeItem (TU/lmr at 6pt) was missing from the cache and made
+% a network-less compile fail. Note this sweep is NOT interchangeable with prewarm.tex's -- that
+% one loads fontenc T1 and so caches ec-lm* metrics, while this preamble has no fontenc and stays
+% on XeTeX's default TU encoding, pulling the lmroman* OTFs instead.
+\newcommand{\shapesweep}{%
+  regular \textbf{bold} \textit{italic} \textsc{smallcaps} \textbf{\textit{bolditalic}}
+  \textbf{\textsc{boldsmallcaps}} \texttt{mono} \emph{emph} \underline{underline}
+  $\vcenter{\hbox{$\bullet$}}$ 0123456789\par}
+
+\begin{document}
+
+{\tiny\shapesweep}
+{\scriptsize\shapesweep}
+{\footnotesize\shapesweep}
+{\small\shapesweep}
+{\normalsize\shapesweep}
+{\large\shapesweep}
+{\Large\shapesweep}
+{\LARGE\shapesweep}
+{\huge\shapesweep}
+{\Huge\shapesweep}
+
+\begin{center}
+    {\huge \scshape Prewarm} \\ \vspace{2pt}
+    Somewhere, Earth \\ \vspace{1pt}
+    \small +00 000 000 {|} \underline{\href{mailto:prewarm@example.com}{prewarm@example.com}}
+    \vspace{-5pt}
+\end{center}
+
+\section{Section}
+
+Body text exercising the base font encoding.
+
+% Exercises the tabular* layout every resumeSubheading is built from.
+\begin{itemize}[leftmargin=0.0in, label={}]
+  \item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{An Organisation} & \textbf{\small 2020 -- Present} \\
+      \textit{\small A Role} & \textit{\small A Place} \\
+    \end{tabular*}
+  \begin{itemize}[leftmargin=0.2in]
+    \item\small{A bullet, so enumitem's list machinery is loaded.}
+  \end{itemize}
+\end{itemize}
+
+\end{document}

@@ -1,136 +1,204 @@
 \#{ ------------------------------------------------------------------------------------------ }
-\#{ Indian-market resume layout.                                                                 }
+\#{ Indian-market resume layout, converted from the owner's own .tex.                           }
+\#{ Based on Jake Gutierrez's template, itself based on https://github.com/sb2nov/resume, MIT.   }
 \#{                                                                                              }
 \#{ NOTE: a Jinja comment here runs from the opening delimiter to the very next closing brace, so }
 \#{ no comment line in this file may contain a brace of either kind. One inside a comment ends it }
 \#{ early and dumps the rest of the prose into the document before the documentclass line, which  }
 \#{ surfaces as the baffling "LaTeX Error: Missing begin document".                               }
 \#{                                                                                              }
-\#{ STARTER TEMPLATE -- derived from resume.tex.jinja so the feature works end to end. Replace    }
-\#{ the body with your own .tex when you have it, keeping the three rules below intact.           }
+\#{ Three deliberate departures from the source .tex, each one required to compile under          }
+\#{ Tectonic, which is a XeTeX engine rather than pdfTeX:                                         }
 \#{                                                                                              }
-\#{ 1. No photograph. Indian resumes conventionally omit one, and app/latex_render.py declares    }
-\#{    this layout with supports_photo=False, so has_photo is always False here and there is no   }
-\#{    includegraphics call. Do not add one without flipping that flag, or the image file is      }
-\#{    never written into the compile directory and the build fails.                              }
-\#{                                                                                              }
-\#{ 2. Escaping is split. name, summary and every per-entry field must go through latex_escape    }
-\#{    HERE, in the template. But header_location, header_line2, header_linkedin, header_website  }
-\#{    and languages_line are emitted RAW -- _build_header_fields in app/latex_render.py has      }
-\#{    already escaped them and wrapped them in hyperlink markup. Escaping those a second time    }
-\#{    prints the backslashes; forgetting to escape the others lets a stray ampersand or percent  }
-\#{    sign in someone's resume break the build.                                                  }
-\#{                                                                                              }
-\#{ 3. The preamble matches resume.tex.jinja exactly, and latex_templates/prewarm.tex pre-warms   }
-\#{    Tectonic's bundle cache with those same packages during the Docker build. Adding a package }
-\#{    here means adding it to prewarm.tex too, or the first compile in production pays a         }
-\#{    download -- and fails outright if egress is blocked.                                       }
-\#{                                                                                              }
-\#{ Section order differs from the German layout: Education sits above Experience, the usual      }
-\#{ convention for Indian resumes, and Projects moves below Experience.                           }
+\#{  * fontawesome5 is NOT loaded. Loading it makes Tectonic die with a heap-corruption crash     }
+\#{    while pulling FontAwesome5Free-Solid-900.otf through its XeTeX helper. The source .tex     }
+\#{    never actually placed an icon anyway -- the stray raisebox fragments in the contact line   }
+\#{    are leftovers from where icons used to be -- so nothing visible is lost.                   }
+\#{  * marvosym is NOT loaded either. Also unused, and it is another font-heavy package.          }
+\#{  * The glyphtounicode input and pdfgentounicode assignment are guarded behind ifdefined.      }
+\#{    Both are pdfTeX primitives that XeTeX does not provide, so unguarded they fail with        }
+\#{    "Undefined control sequence" inside glyphtounicode.tex. They exist to make the PDF's text  }
+\#{    layer ATS-parsable; XeTeX already emits sane Unicode mappings, and the guard means they    }
+\#{    switch themselves back on if this is ever compiled with pdfTeX.                            }
+\#{                                                                                               }
+\#{ Contract rules, same as resume.tex.jinja:                                                     }
+\#{  1. No photograph. app/latex_render.py declares this layout with supports_photo=False, so     }
+\#{     has_photo is always False here and the photo bytes are never even fetched.                }
+\#{  2. Escaping is split. name, summary and every per-entry field go through latex_escape HERE.  }
+\#{     But header_location, header_line2, header_linkedin, header_website and languages_line are }
+\#{     emitted RAW -- _build_header_fields in app/latex_render.py already escaped them and built }
+\#{     the hyperlink markup. Escaping those twice prints backslashes; forgetting to escape the   }
+\#{     others lets a stray ampersand or percent sign in a resume break the build.                }
+\#{  3. latex_templates/prewarm_in.tex mirrors this preamble and is compiled during the Docker    }
+\#{     build so Tectonic's bundle cache is warm. Add a package here, add it there too, or the    }
+\#{     first compile in production pays a download and fails outright if egress is blocked.      }
 \#{ ------------------------------------------------------------------------------------------ }
-\documentclass[11pt,a4paper]{article}
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
-\usepackage[a4paper,margin=1.2cm]{geometry}
-\usepackage{graphicx}
-\usepackage{xcolor}
-\usepackage{enumitem}
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
 \usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
 \usepackage[hidelinks]{hyperref}
-\pagestyle{empty}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{multicol}
+\usepackage{setspace}
 
-\definecolor{accent}{HTML}{1F77B4}
+\renewcommand{\baselinestretch}{1.5}
+\setlength{\multicolsep}{-3.0pt}
+\setlength{\columnsep}{-1pt}
 
-\setlength{\parindent}{0pt}
-\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}[\titlerule]
+\#{ pdfTeX-only; see the header note. Silently skipped under Tectonic/XeTeX. }
+\ifdefined\pdfgentounicode
+  \input{glyphtounicode}
+\fi
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\addtolength{\oddsidemargin}{-0.6in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1.19in}
+\addtolength{\topmargin}{-.7in}
+\addtolength{\textheight}{1.4in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large\bfseries
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+\ifdefined\pdfgentounicode
+  \pdfgentounicode=1
+\fi
+
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & \textbf{\small #2} \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{1.010\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & \textbf{\small #2}\\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\renewcommand\labelitemi{$\vcenter{\hbox{\tiny$\bullet$}}$}
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.0in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.2in]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
 
 \begin{document}
 
-\#{ Header spans the full width -- there is no photo minipage to make room for. }
+\#{ ----------HEADING---------- }
 \begin{center}
-{\Huge \textbf{\VAR{name | latex_escape}}}\\[6pt]
+    {\huge \scshape \VAR{name | latex_escape}} \\ \vspace{2pt}
 \BLOCK{ if header_location }
-\VAR{header_location}\\[2pt]
+    \VAR{header_location} \\ \vspace{1pt}
 \BLOCK{ endif }
-\BLOCK{ if header_line2 }
-\VAR{header_line2}\\[2pt]
-\BLOCK{ endif }
-\BLOCK{ if header_linkedin }
-\VAR{header_linkedin}\BLOCK{ if header_website } \quad | \quad \VAR{header_website}\BLOCK{ endif }
-\BLOCK{ elif header_website }
-\VAR{header_website}
-\BLOCK{ endif }
+    \small \VAR{header_line2}\BLOCK{ if header_linkedin } {|} \underline{\VAR{header_linkedin}}\BLOCK{ endif }\BLOCK{ if header_website } {|} \underline{\VAR{header_website}}\BLOCK{ endif }
+    \vspace{-5pt}
 \end{center}
 
-\vspace{0.3cm}
-\hrule
-
 \BLOCK{ if summary }
-\section{Professional Summary}
+\section{Summary}
 \VAR{summary | latex_escape}
 \BLOCK{ endif }
 
-\BLOCK{ if skill_categories }
-\section*{Technical Skills}
-\BLOCK{ for cat in skill_categories }
-\BLOCK{ if cat.category }\textbf{\VAR{cat.category | latex_escape}:} \BLOCK{ endif }\VAR{cat['items'] | join(', ') | latex_escape} \\
-\BLOCK{ endfor }
-\BLOCK{ endif }
-
+\#{ -----------EDUCATION----------- }
 \BLOCK{ if education }
-\section*{Education}
+\section{Education}
+\resumeSubHeadingListStart
 \BLOCK{ for entry in education }
-\textbf{\VAR{entry.institution | latex_escape}} \hfill \VAR{entry.dates | latex_escape}\\
-\VAR{entry.degree | latex_escape}\BLOCK{ if entry.location }, \VAR{entry.location | latex_escape}\BLOCK{ endif }
-\BLOCK{ if not loop.last }
-\\[3pt]\\
-\BLOCK{ endif }
+    \resumeSubheading
+      {\VAR{entry.institution | latex_escape}}{\VAR{entry.dates | latex_escape}}
+      {\VAR{entry.degree | latex_escape}}{\VAR{entry.location | latex_escape}}
 \BLOCK{ endfor }
+\resumeSubHeadingListEnd
+\vspace{-15pt}
 \BLOCK{ endif }
 
-\BLOCK{ if experience }
-\section*{Work Experience}
-\BLOCK{ for entry in experience }
-\textbf{\VAR{entry.title | latex_escape}\BLOCK{ if entry.organization } | \VAR{entry.organization | latex_escape}\BLOCK{ endif }} \hfill \VAR{entry.dates | latex_escape}\BLOCK{ if entry.location }\\
-\textit{\VAR{entry.location | latex_escape}}\BLOCK{ endif }
-\begin{itemize}[leftmargin=1.2em]
-\BLOCK{ for bullet in entry.bullets }
-\item \VAR{bullet | latex_escape}
+\#{ -----------TECHNICAL SKILLS----------- }
+\BLOCK{ if skill_categories or languages_line }
+\section{Professional Skills}
+ \begin{itemize}[leftmargin=0.0in, label={}]
+    \small{\item{
+\BLOCK{ for cat in skill_categories }
+     \textbf{\VAR{cat.category | latex_escape}}{: \VAR{cat['items'] | join(', ') | latex_escape}} \\
+     \vspace{4pt}
 \BLOCK{ endfor }
-\end{itemize}
-\BLOCK{ if entry.technologies }
-\textit{Technologies: \VAR{entry.technologies | join(', ') | latex_escape}}
-\BLOCK{ endif }
-\BLOCK{ if not loop.last }
-\newline
-\newline
-\BLOCK{ endif }
-\BLOCK{ endfor }
-\BLOCK{ endif }
-
-\BLOCK{ if projects }
-\section*{Projects}
-\BLOCK{ for entry in projects }
-\textbf{\VAR{entry.name | latex_escape}}\BLOCK{ if entry.link } -- \href{\VAR{entry.link}}{\VAR{entry.link | latex_escape}}\BLOCK{ endif } \hfill \VAR{entry.dates | latex_escape}
-\begin{itemize}[leftmargin=1.2em]
-\BLOCK{ for bullet in entry.bullets }
-\item \VAR{bullet | latex_escape}
-\BLOCK{ endfor }
-\end{itemize}
-\BLOCK{ if entry.technologies }
-\textit{Technologies: \VAR{entry.technologies | join(', ') | latex_escape}}
-\BLOCK{ endif }
-\BLOCK{ if not loop.last }
-\newline
-\newline
-\BLOCK{ endif }
-\BLOCK{ endfor }
-\BLOCK{ endif }
-
 \BLOCK{ if languages_line }
-\section*{Languages}
-\VAR{languages_line}
+    \textbf{Spoken Languages}: \VAR{languages_line}
+\BLOCK{ endif }
+     }}
+ \end{itemize}
+ \vspace{-15pt}
+\BLOCK{ endif }
+
+\#{ -----------EXPERIENCE----------- }
+\BLOCK{ if experience }
+\section{Professional Experience}
+  \resumeSubHeadingListStart
+\BLOCK{ for entry in experience }
+   \resumeSubheading
+      {\VAR{entry.organization | latex_escape}}{\VAR{entry.dates | latex_escape}}
+      {\VAR{entry.title | latex_escape}\BLOCK{ if entry.technologies } $|$ {\VAR{entry.technologies | join(', ') | latex_escape}}\BLOCK{ endif }}{\VAR{entry.location | latex_escape}}
+\BLOCK{ if entry.bullets }
+      \resumeItemListStart
+\BLOCK{ for bullet in entry.bullets }
+        \resumeItem{\VAR{bullet | latex_escape}}
+\BLOCK{ endfor }
+      \resumeItemListEnd
+\BLOCK{ endif }
+\BLOCK{ endfor }
+  \resumeSubHeadingListEnd
+\vspace{-13pt}
+\BLOCK{ endif }
+
+\#{ -----------PROJECTS----------- }
+\BLOCK{ if projects }
+\section{Projects}
+    \vspace{-5pt}
+    \resumeSubHeadingListStart
+\BLOCK{ for entry in projects }
+      \resumeProjectHeading
+          {\textbf{\VAR{entry.name | latex_escape}}\BLOCK{ if entry.link } $|$ \href{\VAR{entry.link}}{\underline{\VAR{entry.link | latex_escape}}}\BLOCK{ endif }\BLOCK{ if entry.technologies } \\ \emph{\VAR{entry.technologies | join(', ') | latex_escape}}\BLOCK{ endif }}{\VAR{entry.dates | latex_escape}}
+\BLOCK{ if entry.bullets }
+          \resumeItemListStart
+\BLOCK{ for bullet in entry.bullets }
+            \resumeItem{\VAR{bullet | latex_escape}}
+\BLOCK{ endfor }
+          \resumeItemListEnd
+\BLOCK{ endif }
+\BLOCK{ if not loop.last }
+          \vspace{-20pt}
+\BLOCK{ endif }
+\BLOCK{ endfor }
+    \resumeSubHeadingListEnd
 \BLOCK{ endif }
 
 \end{document}
