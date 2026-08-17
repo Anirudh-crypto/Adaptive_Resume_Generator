@@ -290,6 +290,12 @@ in **[docs/ci-cd-setup.md](docs/ci-cd-setup.md)**. `deploy.ps1` remains the manu
   without revalidating. Since the HTML templates are never cached, a deploy could otherwise leave
   a browser running the previous release's JS against the new release's markup — which fails
   silently. Keep new assets going through `static_url()` rather than a hardcoded `/static/...`.
+  The two HTML routes send **`Cache-Control: no-store`** (`_html_response()` in `app/main.py`) to
+  close the same gap from the other side: nothing sets a cache header on the document either, so a
+  browser could hold a stale *page* against fresh assets. That one is nastier to diagnose, because
+  a control added in the new release is simply absent from the old markup — it looks like a broken
+  feature rather than a caching problem. The fingerprinting and the `no-store` are a pair; neither
+  is sufficient alone.
 - The Supabase client is deliberately pinned to **HTTP/1.1** (`app/db.py`). `postgrest`/`storage3`
   default to `http2=True`, and httpcore's *sync* HTTP/2 transport multiplexes every request over
   one socket — but this client is used from several threads at once (the generation pipeline runs

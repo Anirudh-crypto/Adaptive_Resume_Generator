@@ -45,12 +45,17 @@ templates = Jinja2Templates(directory="app/templates")
 def static_url(filename: str) -> str:
     """Fingerprint static asset URLs with a hash of their contents.
 
-    Templates are rendered per request and never cached, but /static files are served by
-    StaticFiles with an etag and no Cache-Control -- so browsers fall back to heuristic
+    Templates are rendered per request and never cached server-side, but /static files are served
+    by StaticFiles with an etag and no Cache-Control -- so browsers fall back to heuristic
     freshness and can serve a stale asset for a long time without revalidating. After a deploy
     that leaves a browser running the previous release's JS against the new release's HTML,
     which fails silently rather than loudly. A content hash in the query string makes a changed
     file a different URL, so the stale copy can never be reused.
+
+    This only closes one direction. The HTML document had no Cache-Control either, so a browser
+    could equally serve a stale *page* against the new release's assets -- the same mismatch, from
+    the other side, and it looks like a feature simply not existing. `_html_response` handles that
+    half; the two mechanisms are a pair and neither is sufficient alone.
     """
     try:
         digest = hashlib.sha256(STATIC_DIR.joinpath(filename).read_bytes()).hexdigest()
@@ -104,14 +109,33 @@ def _supabase_context() -> dict:
     }
 
 
+def _html_response(request: Request, template_name: str) -> Response:
+    """Render a page, and tell the browser never to keep a copy of it.
+
+    The counterpart to `static_url`. Assets are fingerprinted so a stale one can never be reused;
+    without this the *document* was still cacheable, since neither Starlette nor Cloud Run sets any
+    Cache-Control on it. A browser holding yesterday's HTML against today's JS fails the same silent
+    way -- most visibly, a newly shipped control simply isn't in the markup, so the feature looks
+    broken rather than stale.
+
+    no-store rather than no-cache because TemplateResponse carries no ETag or Last-Modified, so
+    there is nothing for a revalidation request to match against; it would refetch in full anyway.
+    The pages are tiny and the fingerprinted assets they reference stay cacheable, so this costs
+    almost nothing.
+    """
+    response = templates.TemplateResponse(request, template_name, _supabase_context())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/")
 def index(request: Request):
-    return templates.TemplateResponse(request, "index.html", _supabase_context())
+    return _html_response(request, "index.html")
 
 
 @app.get("/profile")
 def profile(request: Request):
-    return templates.TemplateResponse(request, "profile.html", _supabase_context())
+    return _html_response(request, "profile.html")
 
 
 @app.get("/health")
