@@ -98,6 +98,9 @@ pdfFileInput.addEventListener("change", async () => {
   } finally {
     pdfFileInput.disabled = false;
     pdfFileInput.value = "";
+    // Importing draws on the same quota as generating. A successful import spent a slot; a failed
+    // one refunded it server-side. Either way the badge needs the server's number, not a guess.
+    refreshUsageBadge();
   }
 });
 

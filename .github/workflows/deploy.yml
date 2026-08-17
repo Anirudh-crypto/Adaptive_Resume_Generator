@@ -166,7 +166,7 @@ jobs:
             --no-traffic --tag candidate \
             --no-cpu-throttling \
             --min-instances=0 --max-instances=2 --memory=512Mi --cpu=1 \
-            --set-env-vars "SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }},GEMINI_MODEL=${{ vars.GEMINI_MODEL }},DAILY_GENERATION_LIMIT=${{ vars.DAILY_GENERATION_LIMIT }},PHOTO_BUCKET=${{ vars.PHOTO_BUCKET }},PDF_BUCKET=${{ vars.PDF_BUCKET }}" \
+            --set-env-vars "SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }},GEMINI_MODEL=${{ vars.GEMINI_MODEL }},GENERATION_LIMIT=${{ vars.GENERATION_LIMIT }},GENERATION_WINDOW_HOURS=${{ vars.GENERATION_WINDOW_HOURS }},PHOTO_BUCKET=${{ vars.PHOTO_BUCKET }},PDF_BUCKET=${{ vars.PDF_BUCKET }}" \
             --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest" \
             --quiet
 

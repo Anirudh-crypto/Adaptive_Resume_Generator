@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Holds every generated artifact — tailored resume PDFs and cover letter .docx files.
     pdf_bucket: str = "resume-pdf"
 
-    daily_generation_limit: int = 5
+    # Sliding-window rate limit on the shared Gemini key: at most `generation_limit` generations in
+    # any rolling `generation_window_hours`. Sliding rather than per-calendar-day so there is no
+    # burst at a bucket boundary.
+    generation_limit: int = 5
+    generation_window_hours: int = 5
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

@@ -10,10 +10,11 @@ photo, and generated documents.
 1. Sign in with Google.
 2. On the **My Resume & Photo** page, upload your existing resume as a PDF (auto-extracted into an
    editable markdown convention via Gemini) or write it directly, plus an optional headshot photo.
-3. On the home page, paste a job description and click Generate. The app sends your resume content
-   + the job description to Gemini, asking it to reorder, select, and rephrase your existing
-   summary/bullets/skills to match the JD — it is not allowed to invent employers, titles, dates,
-   or skills that aren't already in your resume (see "Anti-hallucination design" below).
+3. On the home page, paste a job description, pick where the job is (**Germany** or **India**), and
+   click Generate. The app sends your resume content + the job description to Gemini, asking it to
+   reorder, select, and rephrase your existing summary/bullets/skills to match the JD — it is not
+   allowed to invent employers, titles, dates, or skills that aren't already in your resume (see
+   "Anti-hallucination design" below).
 4. The same run then writes a **cover letter** from the *tailored* resume plus the job description,
    so the letter argues from the same evidence the resume leads with. It's rendered to a `.docx`
    (`app/docx_render.py`, via `python-docx`) so you can edit it before sending.
@@ -24,7 +25,29 @@ photo, and generated documents.
 
 One click, one rate-limit unit: there's no separate "generate cover letter" button. If cover letter
 generation fails, the resume PDF is still delivered and the failure is surfaced as a warning on the
-result card rather than failing the whole job.
+result card rather than failing the whole job. If the *whole* job fails, the rate-limit slot is
+given back — a Gemini outage costs you nothing.
+
+### Regional layouts
+
+The same resume content renders through a different LaTeX layout depending on the selected region,
+because conventions differ by market:
+
+| Region | Template | Photo | Section order |
+| --- | --- | --- | --- |
+| Germany | `latex_templates/resume.tex.jinja` | yes | Summary, Skills, Projects, Experience, Education |
+| India | `latex_templates/resume_in.tex.jinja` | no | Summary, Education, Skills, Experience, Projects |
+
+Layouts are declared in `LAYOUTS` in `app/latex_render.py`, and each one states whether it supports
+a photo — so a saved headshot is simply not fetched for a layout that has nowhere to put it. Adding
+a third region means adding a template plus one entry there, and a value to the `region` Literal on
+`GenerateRequest`.
+
+Each layout has its own `prewarm_*.tex` compiled during the Docker build to warm Tectonic's package
+cache; the two preambles are different enough that they get separate files. Note the Indian template
+deliberately omits `fontawesome5` (it crashes Tectonic while loading its OTF) and guards
+`glyphtounicode`/`\pdfgentounicode` behind `\ifdefined`, since those are pdfTeX primitives and
+Tectonic is a XeTeX engine.
 
 ## Architecture
 
@@ -36,9 +59,11 @@ result card rather than failing the whole job.
   and cover letter `.docx` files alike), accessed server-side via the service_role key
   (`app/db.py`). Job/progress state lives in the database, not in-process memory, so it's correct
   under Cloud Run's multi-instance autoscaling.
-- **Tailoring + cover letter**: Google Gemini, one shared API key, with a per-user daily generation
-  limit (`DAILY_GENERATION_LIMIT`) to protect the shared free-tier quota. One generation = one
-  tailoring call (`app/tailor.py`) + one cover letter call (`app/cover_letter.py`).
+- **Tailoring + cover letter**: Google Gemini, one shared API key, with a per-user sliding-window
+  rate limit (`GENERATION_LIMIT` in any rolling `GENERATION_WINDOW_HOURS`) to protect the shared
+  free-tier quota. One generation = one tailoring call (`app/tailor.py`) + one cover letter call
+  (`app/cover_letter.py`). A generation that fails gives its slot back, so a Gemini outage doesn't
+  cost the user anything.
 - **PDF compiling**: Tectonic, invoked in-process (`app/compile_service.py`) — no separate service.
 - **DOCX writing**: `python-docx`, in-process (`app/docx_render.py`) — no Word/LibreOffice needed.
 - **Hosting**: designed for Google Cloud Run's always-free tier (scales to zero, no time-boxed
@@ -111,7 +136,7 @@ gcloud run deploy resume-builder \
   --region REGION --allow-unauthenticated \
   --no-cpu-throttling \
   --min-instances=0 --max-instances=2 --memory=512Mi --cpu=1 \
-  --set-env-vars "SUPABASE_URL=https://xxxx.supabase.co,SUPABASE_ANON_KEY=your-anon-key,GEMINI_MODEL=gemini-3.5-flash,DAILY_GENERATION_LIMIT=5,PHOTO_BUCKET=photo,PDF_BUCKET=resume-pdf" \
+  --set-env-vars "SUPABASE_URL=https://xxxx.supabase.co,SUPABASE_ANON_KEY=your-anon-key,GEMINI_MODEL=gemini-3.5-flash,GENERATION_LIMIT=5,GENERATION_WINDOW_HOURS=5,PHOTO_BUCKET=photo,PDF_BUCKET=resume-pdf" \
   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest"
 ```
 

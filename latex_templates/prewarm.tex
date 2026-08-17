@@ -7,6 +7,9 @@
 % Keep this preamble in sync with resume.tex.jinja. If a package is added there but not here,
 % the first real compile in production pays a download (and fails outright if egress is blocked).
 %
+% This file covers the German layout only. The Indian layout has a substantially different
+% preamble and gets its own prewarm_in.tex; the Dockerfile compiles both.
+%
 % This file is static on purpose: the Dockerfile compiles it *before* copying app/, so an
 % ordinary code change cannot invalidate the ~100MB bundle layer and force it to be rebuilt and
 % re-pushed to Artifact Registry.
@@ -26,7 +29,29 @@
 \setlength{\parindent}{0pt}
 \titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}[\titlerule]
 
+% Every size/series/shape the template can reach. Tectonic fetches font metrics lazily and
+% *separately* from .sty files, so loading the packages is not enough on its own: a shape this
+% document never sets is a shape the first real compile has to download. That was a live bug --
+% bold text in the skills section (T1/lmr/bx at 10.95pt) was missing from the cache, so a
+% network-less compile failed outright. Cheap insurance: sweep everything, it costs build time
+% once and nothing at runtime.
+\newcommand{\shapesweep}{%
+  regular \textbf{bold} \textit{italic} \textsc{smallcaps} \textbf{\textit{bolditalic}}
+  \textbf{\textsc{boldsmallcaps}} \texttt{mono} \emph{emph} \underline{underline}
+  $\vcenter{\hbox{$\bullet$}}$ 0123456789\par}
+
 \begin{document}
+
+{\tiny\shapesweep}
+{\scriptsize\shapesweep}
+{\footnotesize\shapesweep}
+{\small\shapesweep}
+{\normalsize\shapesweep}
+{\large\shapesweep}
+{\Large\shapesweep}
+{\LARGE\shapesweep}
+{\huge\shapesweep}
+{\Huge\shapesweep}
 
 \begin{minipage}[t]{0.98\textwidth}
 {\Huge \textbf{Prewarm}}\\[4pt]

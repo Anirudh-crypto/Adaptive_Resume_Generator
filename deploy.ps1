@@ -103,7 +103,7 @@ gcloud run deploy $SERVICE `
   --allow-unauthenticated `
   --no-cpu-throttling `
   --min-instances=0 --max-instances=2 --memory=512Mi --cpu=1 `
-  --set-env-vars "SUPABASE_URL=$($envVars['SUPABASE_URL']),SUPABASE_ANON_KEY=$($envVars['SUPABASE_ANON_KEY']),GEMINI_MODEL=$($envVars['GEMINI_MODEL']),DAILY_GENERATION_LIMIT=$($envVars['DAILY_GENERATION_LIMIT']),PHOTO_BUCKET=$($envVars['PHOTO_BUCKET']),PDF_BUCKET=$($envVars['PDF_BUCKET'])" `
+  --set-env-vars "SUPABASE_URL=$($envVars['SUPABASE_URL']),SUPABASE_ANON_KEY=$($envVars['SUPABASE_ANON_KEY']),GEMINI_MODEL=$($envVars['GEMINI_MODEL']),GENERATION_LIMIT=$($envVars['GENERATION_LIMIT']),GENERATION_WINDOW_HOURS=$($envVars['GENERATION_WINDOW_HOURS']),PHOTO_BUCKET=$($envVars['PHOTO_BUCKET']),PDF_BUCKET=$($envVars['PDF_BUCKET'])" `
   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest"
 Assert-LastExitCode "Cloud Run deploy failed"
 

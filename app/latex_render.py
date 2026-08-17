@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import jinja2
@@ -8,8 +9,29 @@ import jinja2
 from app.models import Contact, Resume
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "latex_templates"
-TEMPLATE_NAME = "resume.tex.jinja"
 PHOTO_RESOURCE_NAME = "pic.JPG"
+
+
+@dataclass(frozen=True)
+class Layout:
+    """A resume layout, plus whether it has anywhere to put a photograph.
+
+    `supports_photo` lives here rather than at the call site so the pipeline never has to special-case
+    a region by name: German CVs conventionally carry a headshot, Indian ones don't, and that fact
+    belongs with the template that does or doesn't have an \\includegraphics in it.
+    """
+
+    template: str
+    supports_photo: bool
+
+
+# Keyed by the region a job is in. The keys are the API's accepted `region` values.
+LAYOUTS: dict[str, Layout] = {
+    "germany": Layout(template="resume.tex.jinja", supports_photo=True),
+    "india": Layout(template="resume_in.tex.jinja", supports_photo=False),
+}
+
+DEFAULT_REGION = "germany"
 
 _ESCAPE_MAP = {
     "\\": r"\textbackslash{}",
@@ -83,8 +105,17 @@ def _build_env() -> jinja2.Environment:
 _ENV = _build_env()
 
 
-def render_resume_latex(resume: Resume, has_photo: bool = False) -> str:
-    template = _ENV.get_template(TEMPLATE_NAME)
+def render_resume_latex(
+    resume: Resume, has_photo: bool = False, region: str = DEFAULT_REGION
+) -> str:
+    # Resolved through the LAYOUTS mapping, never by interpolating `region` into a filename: the
+    # Jinja loader is pointed at the whole latex_templates/ directory, so passing caller-controlled
+    # text to get_template() would turn this into an arbitrary-file-read.
+    layout = LAYOUTS.get(region)
+    if layout is None:
+        raise ValueError(f"Unknown resume region {region!r}; expected one of {sorted(LAYOUTS)}")
+
+    template = _ENV.get_template(layout.template)
 
     projects = []
     for entry in resume.projects:

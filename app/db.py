@@ -139,21 +139,61 @@ def get_job(job_id: str, user_id: str) -> dict | None:
     return resp.data[0]
 
 
-def get_daily_usage(user_id: str) -> int:
-    today = datetime.datetime.now(datetime.UTC).date().isoformat()
+def claim_generation_slot(user_id: str, limit: int, window_hours: int) -> str | None:
+    """Reserve one generation against the sliding-window limit.
+
+    Returns the new event's id, which the caller must hand to `release_generation_slot` if the work
+    it paid for ends up failing. Returns None when the user is already at the limit.
+
+    The count and the insert happen inside one `security definer` function holding a per-user
+    advisory lock, so this is atomic -- checking and charging separately would let two concurrent
+    requests both see room and both take it.
+    """
+    resp = _client.rpc(
+        "claim_generation_slot",
+        {"p_user_id": user_id, "p_limit": limit, "p_window": f"{window_hours} hours"},
+    ).execute()
+    return resp.data or None
+
+
+def release_generation_slot(event_id: str) -> None:
+    """Give a claimed slot back, because the work it paid for failed.
+
+    Deleting the row is deliberately idempotent: releasing twice is a no-op rather than something
+    that could hand out a free generation.
+    """
+    _client.table("generation_events").delete().eq("id", event_id).execute()
+
+
+def get_usage(user_id: str, limit: int, window_hours: int) -> dict:
+    """Current usage for the badge: how many slots are in use and when the next one frees up.
+
+    A sliding window has no single reset instant -- capacity returns when the oldest event in the
+    window ages out -- so `next_reset_at` is that event's timestamp plus the window, or None when
+    the user has nothing in flight.
+    """
+    window_start = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=window_hours)
     resp = (
-        _client.table("usage_counters")
-        .select("generation_count")
+        _client.table("generation_events")
+        .select("created_at")
         .eq("user_id", user_id)
-        .eq("usage_date", today)
+        .gt("created_at", window_start.isoformat())
+        .order("created_at")
         .execute()
     )
-    if not resp.data:
-        return 0
-    return resp.data[0]["generation_count"]
+    events = resp.data or []
 
+    next_reset_at = None
+    if events:
+        oldest = datetime.datetime.fromisoformat(events[0]["created_at"])
+        next_reset_at = (oldest + datetime.timedelta(hours=window_hours)).isoformat()
 
-def increment_usage(user_id: str) -> int:
-    today = datetime.datetime.now(datetime.UTC).date().isoformat()
-    resp = _client.rpc("increment_usage", {"p_user_id": user_id, "p_date": today}).execute()
-    return resp.data
+    used = len(events)
+    return {
+        "used": used,
+        "limit": limit,
+        # Clamped because the advisory lock protects a single Postgres instance, not a hand-edited
+        # row: a negative "remaining" would be alarming nonsense in the UI.
+        "remaining": max(limit - used, 0),
+        "next_reset_at": next_reset_at,
+    }

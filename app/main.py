@@ -6,6 +6,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
@@ -19,7 +20,7 @@ from app.compile_service import LatexCompileError, compile_pdf
 from app.config import Settings
 from app.cover_letter import generate_cover_letter
 from app.docx_render import DOCX_CONTENT_TYPE, render_cover_letter_docx
-from app.latex_render import PHOTO_RESOURCE_NAME, render_resume_latex
+from app.latex_render import DEFAULT_REGION, LAYOUTS, PHOTO_RESOURCE_NAME, render_resume_latex
 from app.pdf_import import (
     PdfImportError,
     extract_photo_from_pdf,
@@ -63,24 +64,37 @@ templates.env.globals["static_url"] = static_url
 
 class GenerateRequest(BaseModel):
     job_description: str
+    # Picks the resume layout. A Literal gives a 422 on anything unexpected for free, and keeps
+    # caller-supplied text from ever reaching the Jinja template loader.
+    region: Literal["germany", "india"] = DEFAULT_REGION
 
 
 class ResumeTextRequest(BaseModel):
     markdown_text: str
 
 
-def _rate_limit_or_none(user_id: str) -> JSONResponse | None:
-    if db.get_daily_usage(user_id) >= settings.daily_generation_limit:
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": (
-                    f"Daily limit of {settings.daily_generation_limit} generations reached. "
-                    "Try again tomorrow (resets 00:00 UTC)."
-                )
-            },
-        )
-    return None
+def _claim_slot_or_429(user_id: str) -> tuple[str | None, JSONResponse | None]:
+    """Reserve one generation, or explain why we can't.
+
+    Returns `(event_id, None)` on success -- and the caller **must** release that id if the work it
+    paid for then fails, or the user is charged for a document they never received.
+    Returns `(None, response)` when the user is at the limit.
+    """
+    event_id = db.claim_generation_slot(
+        user_id, settings.generation_limit, settings.generation_window_hours
+    )
+    if event_id is not None:
+        return event_id, None
+
+    usage = db.get_usage(user_id, settings.generation_limit, settings.generation_window_hours)
+    hours = settings.generation_window_hours
+    message = (
+        f"Limit of {settings.generation_limit} generations per {hours} "
+        f"hour{'s' if hours != 1 else ''} reached."
+    )
+    if usage.get("next_reset_at"):
+        message += " The next one frees up at " + usage["next_reset_at"] + "."
+    return None, JSONResponse(status_code=429, content={"error": message})
 
 
 def _supabase_context() -> dict:
@@ -125,19 +139,23 @@ def save_my_resume(req: ResumeTextRequest, user_id: str = Depends(get_current_us
 def import_my_resume(
     file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)
 ):
-    limited = _rate_limit_or_none(user_id)
+    event_id, limited = _claim_slot_or_429(user_id)
     if limited:
         return limited
-    db.increment_usage(user_id)
 
     file_bytes = file.file.read()
 
+    # Every failure path below releases the slot: an import that produced nothing must not cost the
+    # user a generation. A scanned PDF with no extractable text and an overloaded Gemini are both
+    # things they'd want to simply retry.
     try:
         raw_text = extract_text_from_pdf(file_bytes)
         resume = structure_resume_from_text(raw_text, settings)
     except PdfImportError as exc:
+        db.release_generation_slot(event_id)
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:
+        db.release_generation_slot(event_id)
         logger.exception("PDF import failed")
         return JSONResponse(status_code=502, content={"error": f"PDF import failed: {exc}"})
 
@@ -178,20 +196,26 @@ def delete_my_photo(user_id: str = Depends(get_current_user_id)):
     return {"status": "deleted"}
 
 
+@app.get("/me/usage")
+def get_my_usage(user_id: str = Depends(get_current_user_id)):
+    return db.get_usage(user_id, settings.generation_limit, settings.generation_window_hours)
+
+
 @app.post("/generate", status_code=202)
 def generate(req: GenerateRequest, user_id: str = Depends(get_current_user_id)):
     if not req.job_description.strip():
         return JSONResponse(status_code=400, content={"error": "Job description is empty"})
 
-    limited = _rate_limit_or_none(user_id)
+    event_id, limited = _claim_slot_or_429(user_id)
     if limited:
         return limited
 
-    db.increment_usage(user_id)
     job_id = db.create_job(user_id)
 
     threading.Thread(
-        target=_run_pipeline, args=(job_id, user_id, req.job_description), daemon=True
+        target=_run_pipeline,
+        args=(job_id, user_id, req.job_description, req.region, event_id),
+        daemon=True,
     ).start()
 
     return {"job_id": job_id}
@@ -212,7 +236,20 @@ def job_status(job_id: str, user_id: str = Depends(get_current_user_id)):
     return job
 
 
-def _run_pipeline(job_id: str, user_id: str, job_description: str) -> None:
+def _run_pipeline(
+    job_id: str,
+    user_id: str,
+    job_description: str,
+    region: str = DEFAULT_REGION,
+    event_id: str | None = None,
+) -> None:
+    """Run the generation pipeline. Runs on a background thread; /generate has already returned 202.
+
+    `event_id` is the rate-limit slot the request reserved. Every path that ends with the job in
+    `status="error"` releases it -- the user produced no document, so it must not cost them a
+    generation. A failed cover letter deliberately does *not* release: the job still completes and
+    the resume PDF ships, which is the artifact they asked for.
+    """
     try:
         db.update_job(job_id, stage="Parsing resume...", percent=5)
         markdown_text = db.get_resume_markdown(user_id)
@@ -235,9 +272,13 @@ def _run_pipeline(job_id: str, user_id: str, job_description: str) -> None:
             cover_letter_error = f"Cover letter could not be generated: {exc}"
 
         db.update_job(job_id, stage="Rendering LaTeX...", percent=60)
-        photo_bytes = db.get_photo_bytes(user_id)
+        # Whether a photo is used is the layout's decision, not the region's -- the Indian layout has
+        # nowhere to put one, so a user with a photo saved doesn't get a stray pic.JPG written into
+        # the compile directory and referenced by nothing.
+        layout = LAYOUTS[region]
+        photo_bytes = db.get_photo_bytes(user_id) if layout.supports_photo else None
         has_photo = photo_bytes is not None
-        tex_source = render_resume_latex(tailored, has_photo=has_photo)
+        tex_source = render_resume_latex(tailored, has_photo=has_photo, region=region)
 
         db.update_job(job_id, stage="Compiling PDF...", percent=70)
         resources = {PHOTO_RESOURCE_NAME: photo_bytes} if has_photo else {}
@@ -268,12 +309,31 @@ def _run_pipeline(job_id: str, user_id: str, job_description: str) -> None:
     except ResumeParseError as exc:
         logger.exception("Resume parse error")
         db.update_job(job_id, status="error", error=f"Could not parse resume: {exc}")
+        _release_slot(event_id)
     except TailoringMismatchError as exc:
         logger.exception("Tailoring mismatch")
         db.update_job(job_id, status="error", error=f"Tailoring failed: {exc}")
+        _release_slot(event_id)
     except LatexCompileError as exc:
         logger.exception("LaTeX compile error")
         db.update_job(job_id, status="error", error=str(exc), error_detail=exc.log)
+        _release_slot(event_id)
     except Exception as exc:  # Gemini API errors (auth, quota, network, ...)
         logger.exception("Pipeline failed")
         db.update_job(job_id, status="error", error=f"Generation failed: {exc}")
+        _release_slot(event_id)
+
+
+def _release_slot(event_id: str | None) -> None:
+    """Hand a rate-limit slot back after a failed generation.
+
+    Never allowed to mask the original failure: this runs inside an exception handler that has
+    already recorded why the job died, and a refund that itself blows up would replace a useful
+    error message with a confusing one.
+    """
+    if event_id is None:
+        return
+    try:
+        db.release_generation_slot(event_id)
+    except Exception:
+        logger.exception("Could not release rate-limit slot %s", event_id)

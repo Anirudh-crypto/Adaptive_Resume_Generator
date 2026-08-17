@@ -26,33 +26,51 @@ create table public.generation_jobs (
 );
 create index on public.generation_jobs (user_id, created_at desc);
 
--- Daily per-user usage counter backing the shared Gemini-key rate limit
-create table public.usage_counters (
-  user_id          uuid not null references auth.users(id) on delete cascade,
-  usage_date       date not null default (now() at time zone 'utc')::date,
-  generation_count int not null default 0,
-  primary key (user_id, usage_date)
+-- One row per generation attempt, backing the sliding-window rate limit on the shared Gemini key.
+--
+-- A row per event rather than a per-day counter, for two reasons. It's the only shape that can
+-- express "no more than N in any rolling window" -- a counter can only express calendar buckets,
+-- which allow a burst straddling the boundary (5 at 04:59 and 5 more at 05:01). And it makes
+-- refunding a failed generation a plain DELETE of that exact row, so a double refund is a no-op
+-- rather than something that has to be guarded against handing out free generations.
+create table public.generation_events (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
 );
+create index on public.generation_events (user_id, created_at desc);
 
-create or replace function public.increment_usage(p_user_id uuid, p_date date)
-returns int language plpgsql security definer as $$
-declare new_count int;
+-- Check-and-charge in a single atomic call. Returns the new event id, or NULL when the caller is
+-- already at the limit (which the app turns into a 429).
+create or replace function public.claim_generation_slot(
+  p_user_id uuid, p_limit int, p_window interval
+) returns uuid language plpgsql security definer as $$
+declare used int; new_id uuid;
 begin
-  insert into public.usage_counters (user_id, usage_date, generation_count)
-  values (p_user_id, p_date, 1)
-  on conflict (user_id, usage_date)
-  do update set generation_count = usage_counters.generation_count + 1
-  returning generation_count into new_count;
-  return new_count;
+  -- Serialise per user. Without this, two concurrent requests can both count N-1 and both insert,
+  -- letting the user exceed the limit -- the classic check-then-charge race.
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+
+  select count(*) into used
+    from public.generation_events
+   where user_id = p_user_id
+     and created_at > now() - p_window;
+
+  if used >= p_limit then
+    return null;
+  end if;
+
+  insert into public.generation_events (user_id) values (p_user_id) returning id into new_id;
+  return new_id;
 end;
 $$;
 
 alter table public.resumes enable row level security;
 alter table public.generation_jobs enable row level security;
-alter table public.usage_counters enable row level security;
+alter table public.generation_events enable row level security;
 create policy "own row" on public.resumes for all using (auth.uid() = user_id);
 create policy "own row" on public.generation_jobs for all using (auth.uid() = user_id);
-create policy "own row" on public.usage_counters for all using (auth.uid() = user_id);
+create policy "own row" on public.generation_events for all using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
 -- Migrations for projects created before a feature landed. Safe to re-run.
@@ -62,3 +80,52 @@ create policy "own row" on public.usage_counters for all using (auth.uid() = use
 alter table public.generation_jobs
   add column if not exists cover_letter_storage_path text,
   add column if not exists cover_letter_error text;
+
+-- Sliding-window rate limit, replacing the per-day usage_counters table.
+--
+-- Run this block on an existing project. It is written to be safe to re-run, and safe to run on a
+-- fresh project where the statements above already created everything.
+create table if not exists public.generation_events (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists generation_events_user_id_created_at_idx
+  on public.generation_events (user_id, created_at desc);
+
+alter table public.generation_events enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+     where schemaname = 'public' and tablename = 'generation_events' and policyname = 'own row'
+  ) then
+    create policy "own row" on public.generation_events for all using (auth.uid() = user_id);
+  end if;
+end
+$$;
+
+create or replace function public.claim_generation_slot(
+  p_user_id uuid, p_limit int, p_window interval
+) returns uuid language plpgsql security definer as $$
+declare used int; new_id uuid;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+
+  select count(*) into used
+    from public.generation_events
+   where user_id = p_user_id
+     and created_at > now() - p_window;
+
+  if used >= p_limit then
+    return null;
+  end if;
+
+  insert into public.generation_events (user_id) values (p_user_id) returning id into new_id;
+  return new_id;
+end;
+$$;
+
+-- The old per-day counter and its RPC are no longer read or written by the app.
+drop function if exists public.increment_usage(uuid, date);
+drop table if exists public.usage_counters cascade;

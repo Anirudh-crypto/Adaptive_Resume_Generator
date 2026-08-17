@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import io
 
-from google import genai
 from google.genai import types
 from pypdf import PdfReader
 
 from app.config import Settings
+from app.gemini import build_client
 from app.models import Resume
 
 MIN_PHOTO_DIMENSION = 100
@@ -100,7 +100,7 @@ def extract_photo_from_pdf(file_bytes: bytes) -> bytes | None:
 
 
 def structure_resume_from_text(raw_text: str, settings: Settings) -> Resume:
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = build_client(settings)
     response = client.models.generate_content(
         model=settings.gemini_model,
         contents=f"Raw resume text extracted from a PDF:\n\n{raw_text}",

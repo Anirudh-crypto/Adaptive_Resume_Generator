@@ -11,6 +11,7 @@ const coverLetterLink = document.getElementById("cover-letter-link");
 const coverLetterWarning = document.getElementById("cover-letter-warning");
 const pdfPreview = document.getElementById("pdf-preview");
 const signedOutNotice = document.getElementById("signed-out-notice");
+const regionGroup = document.getElementById("region-group");
 
 let pollTimer = null;
 let isSignedIn = false;
@@ -33,21 +34,28 @@ generateBtn.addEventListener("click", async () => {
     return;
   }
 
+  const region = regionGroup.querySelector('input[name="region"]:checked').value;
+
   startGenerating();
 
   try {
     const resp = await fetchWithAuth("/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job_description: jobDescription }),
+      body: JSON.stringify({ job_description: jobDescription, region }),
     });
     const data = await resp.json();
 
     if (!resp.ok) {
       stopGenerating();
       showError(data.error || "Something went wrong");
+      // Most likely a 429 — resync the badge so it agrees with what the server just enforced.
+      refreshUsageBadge();
       return;
     }
+
+    // The slot was claimed by that request; reflect it immediately rather than at job end.
+    refreshUsageBadge();
 
     pollJob(data.job_id);
   } catch (err) {
@@ -118,6 +126,9 @@ function pollJob(jobId) {
         stopGenerating();
         const detail = job.error_detail ? `\n\n${job.error_detail}` : "";
         showError(`${job.error || "Generation failed"}${detail}`);
+        // A failed job refunds its slot server-side, so the count goes back UP here. This has to
+        // re-read rather than assume — that refund is the whole point of the change.
+        refreshUsageBadge();
       }
     } catch (err) {
       tolerate(`Lost connection while checking progress: ${err}.`);
@@ -125,9 +136,16 @@ function pollJob(jobId) {
   }, 600);
 }
 
+function setRegionDisabled(disabled) {
+  regionGroup
+    .querySelectorAll('input[name="region"]')
+    .forEach((radio) => (radio.disabled = disabled));
+}
+
 function startGenerating() {
   generateBtn.disabled = true;
   jdInput.disabled = true;
+  setRegionDisabled(true);
   errorBox.classList.add("hidden");
   resultEl.classList.add("hidden");
   progressEl.classList.remove("hidden");
@@ -137,6 +155,7 @@ function startGenerating() {
 function stopGenerating() {
   generateBtn.disabled = !isSignedIn ? true : false;
   jdInput.disabled = false;
+  setRegionDisabled(false);
 }
 
 function setProgress(percent, stage) {
