@@ -64,6 +64,26 @@ def test_static_url_falls_back_when_file_is_missing(monkeypatch, tmp_path):
     assert app_main.static_url("nope.js") == "/static/nope.js"
 
 
+@pytest.mark.parametrize("path", ["/", "/profile"])
+def test_pages_are_not_cacheable(client, path):
+    """The other half of the stale-asset guard that static_url() provides.
+
+    Fingerprinting assets stops a browser reusing an old script against new markup. Without a
+    Cache-Control on the document, the reverse still happened: an old *page* against new scripts,
+    which shows up as a newly shipped control missing from the markup entirely -- looking like a
+    broken feature rather than a stale cache.
+    """
+    assert client.get(path).headers["cache-control"] == "no-store"
+
+
+def test_static_assets_stay_cacheable(client):
+    """no-store belongs on the document only. Putting it on fingerprinted assets would throw away
+    the entire benefit of fingerprinting them."""
+    response = client.get("/static/style.css")
+    assert response.status_code == 200
+    assert response.headers.get("cache-control") != "no-store"
+
+
 def test_index_passes_supabase_config_to_the_browser(client):
     """The anon key and URL are deliberately handed to the client-side Supabase SDK."""
     html = client.get("/").text

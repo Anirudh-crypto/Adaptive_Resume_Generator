@@ -53,7 +53,20 @@ for path in / /profile; do
   [ -s "${page_html}" ] || fail "GET ${path} returned an empty body"
 done
 
-# 3. Static assets must be content-fingerprinted, and the fingerprinted URL must resolve.
+# 3. The HTML document must be uncacheable. Paired with the fingerprinting checked below: assets
+#    are fingerprinted so a stale one cannot be reused, and the document is no-store so a stale
+#    page cannot be reused either. Miss this half and a deploy can leave a browser rendering the
+#    previous release's markup, where a newly shipped control is simply absent -- indistinguishable
+#    from the feature being broken.
+cache_header=$(curl -fsS -D - -o /dev/null --max-time 20 "${BASE}/" | tr -d '\r' \
+  | awk 'tolower($1) == "cache-control:" { $1=""; sub(/^ /, ""); print }')
+echo "  GET / Cache-Control -> ${cache_header:-<none>}"
+case "${cache_header}" in
+  *no-store*) ;;
+  *) fail "GET / must send Cache-Control: no-store, got '${cache_header:-<none>}'" ;;
+esac
+
+# 4. Static assets must be content-fingerprinted, and the fingerprinted URL must resolve.
 #    This is the check that catches a deploy serving the previous release's JS against the new
 #    release's markup -- a failure that is otherwise silent in the browser.
 curl -fsS -o "${page_html}" --max-time 20 "${BASE}/" || fail "GET / failed"
@@ -63,7 +76,7 @@ code=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 20 "${BASE}${asset}")
   || fail "fingerprinted asset ${asset} did not resolve"
 echo "  GET ${asset} -> ${code}"
 
-# 4. An authenticated route must reject an anonymous caller. Cheap proof that auth is wired up
+# 5. An authenticated route must reject an anonymous caller. Cheap proof that auth is wired up
 #    and that we have not just deployed a service with its doors open.
 #    No -f here: curl would treat the expected 401 as an error.
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${BASE}/me/resume")
