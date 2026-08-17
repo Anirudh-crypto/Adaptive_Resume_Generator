@@ -319,6 +319,34 @@ instant rollback always has an image to roll back to.
 - SMTP secrets missing when `report` first runs → red report job on an otherwise green build.
 - `--no-cpu-throttling` dropped from `deploy.yml` → `POST /generate` returns 202 and the
   background thread freezes. Jobs hang mid-pipeline, silently.
+- The "Warm the Tectonic cache" step removed from `_test.yml`, or `scripts/warm_tectonic.sh`
+  changed → see below. It looks redundant. It isn't.
+
+## Tectonic's cache, and why warming it is not optional
+
+Both the Docker build and CI run `scripts/warm_tectonic.sh` before anything compiles for real. Three
+behaviours make that necessary, and all three cost real debugging time to find:
+
+1. **Tectonic fetches font metrics lazily, separately from `.sty` files.** Loading a package does not
+   pull the fonts that package's output will need. `prewarm.tex` originally exercised the *packages*
+   but not the *typography*, so a container with no network could not compile a resume at all —
+   `Font T1/lmr/bx/n/24.88=ec-lmbx12 not loadable`, from the `\Huge \textbf` in the header. This was
+   invisible in production only because Cloud Run has egress and silently downloaded them, which is
+   precisely what the prewarm exists to avoid. Both prewarm documents now sweep every size, series
+   and shape their template can reach.
+2. **On a cold cache Tectonic halts at the first missing file** rather than fetching it and
+   continuing (`halted on potentially-recoverable error as specified`), so one run resolves roughly
+   one missing font. A plain retry loop cannot converge on a document with dozens of font
+   combinations. The script's first pass therefore uses `-Z continue-on-errors`, which walks the
+   whole document and pulls everything down in one go; the second, strict pass is the real
+   assertion. In CI this bug showed up as exactly one failing test with the ten after it passing —
+   because that first failure was itself what warmed the cache.
+3. **The first fetch is flaky**: `error: could not open format file latex`, roughly one run in three,
+   within a second of starting, fixed by retrying. Hence the outer retry loop.
+
+Also note the cache lives at `~/.cache/tectonic`, **lowercase**. Pointing `actions/cache` at
+`~/.cache/Tectonic` fails soft: the save step warns `Path(s) specified in the action for caching
+do(es) not exist` and caches nothing, so every run silently re-downloads the whole bundle.
 
 ## Notes on the test suite
 
