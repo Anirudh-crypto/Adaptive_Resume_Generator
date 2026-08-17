@@ -45,7 +45,7 @@ jobs:
         id: tectonic-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/Tectonic
+          path: ~/.cache/tectonic
           key: tectonic-bundle-v1-${{ hashFiles('latex_templates/**') }}
           restore-keys: tectonic-bundle-v1-
 
@@ -54,6 +54,14 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
           sudo mv tectonic /usr/local/bin/tectonic
           tectonic --version
+
+      # Same script the Docker build uses. Not optional: on a cold cache Tectonic aborts the first
+      # real compile instead of fetching and retrying, which showed up here as exactly one failing
+      # test ("Font T1/lmr/bx/n/24.88=ec-lmbx12 not loadable") while the ten after it passed --
+      # because that first failure was what warmed the cache. This also validates the prewarm
+      # documents themselves on every run, so they cannot silently drift from the templates.
+      - name: Warm the Tectonic cache
+        run: bash scripts/warm_tectonic.sh "$RUNNER_TEMP"
 
       - name: Prepare report directory
         run: |
@@ -96,7 +104,7 @@ jobs:
         if: ${{ !cancelled() && steps.tectonic-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/Tectonic
+          path: ~/.cache/tectonic
           key: tectonic-bundle-v1-${{ hashFiles('latex_templates/**') }}
 
       # Advisory too: pip-audit goes red on CVEs in transitive dependencies that cannot be fixed

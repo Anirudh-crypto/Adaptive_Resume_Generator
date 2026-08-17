@@ -21,9 +21,8 @@ WORKDIR /app
 # layer to Artifact Registry each time, which blows through the free storage tier within a
 # handful of deploys. Keeping it above the code copy means it is built once and then reused.
 COPY latex_templates/ latex_templates/
-RUN tectonic --untrusted -o /tmp latex_templates/prewarm.tex \
-    && tectonic --untrusted -o /tmp latex_templates/prewarm_in.tex \
-    && rm -f /tmp/prewarm.pdf /tmp/prewarm_in.pdf
+COPY scripts/warm_tectonic.sh scripts/warm_tectonic.sh
+RUN sh scripts/warm_tectonic.sh /tmp
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
