@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from app import db as app_db
 from app import main as app_main
 from app.auth import get_current_user_id
+from app.latex_render import DEFAULT_REGION
 from app.models import CoverLetter
 from app.resume_parser import parse_resume_text
 
@@ -47,6 +48,9 @@ class FakeDb:
 
     def __init__(self) -> None:
         self.resumes: dict[str, str] = {}
+        # Mirrors resume_variants, keyed the same way the table is: (user_id, region). Only
+        # non-default regions ever appear here -- the default region *is* self.resumes.
+        self.resume_variants: dict[tuple[str, str], str] = {}
         self.photos: dict[str, bytes] = {}
         self.photo_content_types: dict[str, str] = {}
         self.jobs: dict[str, dict] = {}
@@ -57,11 +61,28 @@ class FakeDb:
 
     # --- resume ---------------------------------------------------------------------------
 
-    def get_resume_markdown(self, user_id: str) -> str:
+    def get_resume_variant(self, user_id: str, region: str) -> str | None:
+        if region == DEFAULT_REGION:
+            return self.resumes.get(user_id, "")
+        return self.resume_variants.get((user_id, region))
+
+    def get_resume_markdown(self, user_id: str, region: str = DEFAULT_REGION) -> str:
+        if region != DEFAULT_REGION:
+            variant = self.resume_variants.get((user_id, region))
+            if variant and variant.strip():
+                return variant
         return self.resumes.get(user_id, "")
 
-    def save_resume_markdown(self, user_id: str, markdown_text: str) -> None:
-        self.resumes[user_id] = markdown_text
+    def save_resume_markdown(
+        self, user_id: str, markdown_text: str, region: str = DEFAULT_REGION
+    ) -> None:
+        if region == DEFAULT_REGION:
+            self.resumes[user_id] = markdown_text
+        else:
+            self.resume_variants[(user_id, region)] = markdown_text
+
+    def delete_resume_variant(self, user_id: str, region: str) -> None:
+        self.resume_variants.pop((user_id, region), None)
 
     # --- photo ----------------------------------------------------------------------------
 
@@ -178,7 +199,9 @@ class FakeDb:
 
 _DB_FUNCTIONS = (
     "get_resume_markdown",
+    "get_resume_variant",
     "save_resume_markdown",
+    "delete_resume_variant",
     "get_photo_bytes",
     "save_photo",
     "delete_photo",

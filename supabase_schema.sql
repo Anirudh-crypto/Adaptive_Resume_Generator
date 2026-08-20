@@ -9,6 +9,19 @@ create table public.resumes (
   updated_at         timestamptz not null default now()
 );
 
+-- A per-region override of the canonical resume in public.resumes.
+--
+-- Only non-default regions get rows here: the default region (germany) *is* resumes.markdown_text.
+-- A user with no row for a region generates from the canonical document, so adding a region never
+-- breaks an existing user and nothing has to be backfilled.
+create table public.resume_variants (
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  region        text not null,
+  markdown_text text not null default '',
+  updated_at    timestamptz not null default now(),
+  primary key (user_id, region)
+);
+
 -- Job/progress state, readable/writable by any Cloud Run instance
 create table public.generation_jobs (
   id                         uuid primary key default gen_random_uuid(),
@@ -66,9 +79,11 @@ end;
 $$;
 
 alter table public.resumes enable row level security;
+alter table public.resume_variants enable row level security;
 alter table public.generation_jobs enable row level security;
 alter table public.generation_events enable row level security;
 create policy "own row" on public.resumes for all using (auth.uid() = user_id);
+create policy "own row" on public.resume_variants for all using (auth.uid() = user_id);
 create policy "own row" on public.generation_jobs for all using (auth.uid() = user_id);
 create policy "own row" on public.generation_events for all using (auth.uid() = user_id);
 
@@ -129,3 +144,29 @@ $$;
 -- The old per-day counter and its RPC are no longer read or written by the app.
 drop function if exists public.increment_usage(uuid, date);
 drop table if exists public.usage_counters cascade;
+
+-- Per-region resume documents. Regional support originally assumed the same content in every
+-- region and only a different layout; an Indian application actually wants an Indian phone number
+-- and its own way of writing education dates.
+--
+-- Purely additive: resumes.markdown_text stays the canonical (germany) document, so an existing
+-- user with no row here keeps generating exactly as before in every region.
+create table if not exists public.resume_variants (
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  region        text not null,
+  markdown_text text not null default '',
+  updated_at    timestamptz not null default now(),
+  primary key (user_id, region)
+);
+
+alter table public.resume_variants enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+     where schemaname = 'public' and tablename = 'resume_variants' and policyname = 'own row'
+  ) then
+    create policy "own row" on public.resume_variants for all using (auth.uid() = user_id);
+  end if;
+end
+$$;

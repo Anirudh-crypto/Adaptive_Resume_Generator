@@ -114,6 +114,68 @@ def test_photo_resources_follow_the_layout(fake_db, stub_gemini, jpeg_bytes, mon
     assert list(seen["resources"]) == ["pic.JPG"]
 
 
+# --- per-region resume documents -------------------------------------------------------------
+
+
+INDIA_RESUME_MD = SAMPLE_RESUME_MD.replace("(555) 123-4567", "+91 98765 43210").replace(
+    "Seattle, WA | 2018", "Seattle, WA | 2014 - 2018"
+)
+
+
+@pytest.fixture
+def captured_tex(monkeypatch) -> dict[str, str]:
+    """Grab the .tex the pipeline hands to the compiler, so these tests need no LaTeX toolchain."""
+    seen: dict[str, str] = {}
+
+    def capture(tex_source, settings, resources=None):
+        seen["tex"] = tex_source
+        return b"%PDF-fake"
+
+    monkeypatch.setattr(app_main, "compile_pdf", capture)
+    return seen
+
+
+def test_generation_uses_the_region_document_when_one_exists(
+    fake_db, stub_gemini, captured_tex
+):
+    """The point of the whole feature: an Indian application carries the Indian phone number and
+    the graduating year written the Indian way, while Germany keeps the canonical values."""
+    fake_db.resume_variants[(TEST_USER, "india")] = INDIA_RESUME_MD
+
+    run_pipeline(fake_db, region="india")
+    assert "+91 98765 43210" in captured_tex["tex"]
+    assert "2014 - 2018" in captured_tex["tex"]
+    assert "(555) 123-4567" not in captured_tex["tex"]
+
+    run_pipeline(fake_db, region="germany")
+    assert "(555) 123-4567" in captured_tex["tex"]
+    assert "+91 98765 43210" not in captured_tex["tex"]
+
+
+def test_generation_falls_back_to_the_canonical_document(fake_db, stub_gemini, captured_tex):
+    """No India document saved -- an existing user must keep generating from the resume they
+    already wrote rather than hitting "no resume saved yet"."""
+    assert fake_db.resume_variants == {}
+
+    job = run_pipeline(fake_db, region="india")
+
+    assert job["status"] == "done"
+    assert "(555) 123-4567" in captured_tex["tex"]
+
+
+def test_a_blank_region_document_falls_back_rather_than_failing(
+    fake_db, stub_gemini, captured_tex
+):
+    """Emptying the India textarea and saving must not turn into an unparseable-resume error on
+    the next India generation."""
+    fake_db.resume_variants[(TEST_USER, "india")] = "   \n"
+
+    job = run_pipeline(fake_db, region="india")
+
+    assert job["status"] == "done"
+    assert "(555) 123-4567" in captured_tex["tex"]
+
+
 @pytest.mark.tectonic
 def test_pipeline_reports_progress_in_order(fake_db, stub_gemini, monkeypatch):
     """Progress must be monotonic -- the UI polls this and would jump backwards otherwise."""

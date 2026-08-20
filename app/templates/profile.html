@@ -32,10 +32,28 @@
         <input type="file" id="pdf-file" accept="application/pdf" />
         <div id="import-status" class="status-line"></div>
 
+        <fieldset id="resume-region-group" class="region-group">
+          <legend>Which version are you editing?</legend>
+          <label class="region-option">
+            <input type="radio" name="resume-region" value="germany" checked />
+            <span>Main resume <small>&mdash; used for Germany</small></span>
+          </label>
+          <label class="region-option">
+            <input type="radio" name="resume-region" value="india" />
+            <span>India <small>&mdash; e.g. an Indian phone number</small></span>
+          </label>
+        </fieldset>
+
+        <div id="fallback-notice" class="notice hidden">
+          You don't have a separate India version yet, so this shows your main resume. Edit it and
+          save to create one — your main resume stays untouched.
+        </div>
+
         <textarea id="resume-md" rows="24" placeholder="# Your Name&#10;&#10;Email: ... | Phone: ...&#10;&#10;## Summary&#10;&#10;..."></textarea>
 
         <div class="button-row">
           <button id="save-resume-btn">Save</button>
+          <button id="reset-variant-btn" class="secondary-btn hidden">Reset to main resume</button>
         </div>
         <div id="resume-status" class="status-line"></div>
         <div id="resume-error" class="hidden"></div>
