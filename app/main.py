@@ -67,11 +67,16 @@ def static_url(filename: str) -> str:
 templates.env.globals["static_url"] = static_url
 
 
+# The region a job is in. A Literal gives a 422 on anything unexpected for free, and keeps
+# caller-supplied text from ever reaching the Jinja template loader. It has to be spelled out
+# rather than derived from LAYOUTS because a Literal's members must be static -- a test asserts
+# the two stay in sync.
+Region = Literal["germany", "india"]
+
+
 class GenerateRequest(BaseModel):
     job_description: str
-    # Picks the resume layout. A Literal gives a 422 on anything unexpected for free, and keeps
-    # caller-supplied text from ever reaching the Jinja template loader.
-    region: Literal["germany", "india"] = DEFAULT_REGION
+    region: Region = DEFAULT_REGION
 
 
 class ResumeTextRequest(BaseModel):
@@ -145,18 +150,47 @@ def health():
 
 
 @app.get("/me/resume")
-def get_my_resume(user_id: str = Depends(get_current_user_id)):
-    return {"markdown_text": db.get_resume_markdown(user_id)}
+def get_my_resume(region: Region = DEFAULT_REGION, user_id: str = Depends(get_current_user_id)):
+    """The document for `region`, plus whether it is one the user actually wrote.
+
+    A region with no document of its own shows the canonical resume, so the editor opens on
+    something useful rather than an empty box; `is_variant` is false in that case, which is what
+    the page uses to offer "create a separate version" instead of "reset to main".
+    """
+    variant = db.get_resume_variant(user_id, region)
+    return {
+        "markdown_text": db.get_resume_markdown(user_id, region),
+        "region": region,
+        "is_variant": variant is not None,
+    }
 
 
 @app.post("/me/resume")
-def save_my_resume(req: ResumeTextRequest, user_id: str = Depends(get_current_user_id)):
+def save_my_resume(
+    req: ResumeTextRequest,
+    region: Region = DEFAULT_REGION,
+    user_id: str = Depends(get_current_user_id),
+):
     try:
         parse_resume_text(req.markdown_text)
     except ResumeParseError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-    db.save_resume_markdown(user_id, req.markdown_text)
+    db.save_resume_markdown(user_id, req.markdown_text, region)
     return {"status": "saved"}
+
+
+@app.delete("/me/resume")
+def delete_my_resume_variant(
+    region: Region = DEFAULT_REGION, user_id: str = Depends(get_current_user_id)
+):
+    """Drop a region's own document, falling back to the canonical resume again."""
+    if region == DEFAULT_REGION:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "That's your main resume — edit it instead of deleting it."},
+        )
+    db.delete_resume_variant(user_id, region)
+    return {"status": "deleted"}
 
 
 @app.post("/me/resume/import")
@@ -276,7 +310,9 @@ def _run_pipeline(
     """
     try:
         db.update_job(job_id, stage="Parsing resume...", percent=5)
-        markdown_text = db.get_resume_markdown(user_id)
+        # Which document, not just which template: a region the user has written their own version
+        # of generates from that one, and every other region falls back to the canonical resume.
+        markdown_text = db.get_resume_markdown(user_id, region)
         if not markdown_text.strip():
             raise ResumeParseError("No resume saved yet — add one on the profile page first.")
         resume = parse_resume_text(markdown_text)

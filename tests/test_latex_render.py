@@ -76,6 +76,17 @@ def test_layouts_declare_whether_they_support_a_photo():
     assert LAYOUTS["india"].supports_photo is False
 
 
+def test_the_api_region_literal_matches_the_layout_registry():
+    """A Literal's members have to be written out, so the API's accepted regions are a hand-kept
+    copy of the LAYOUTS keys. Adding a layout without extending the Literal would make the new
+    region a 422; extending the Literal without adding a layout would make it a 500."""
+    from typing import get_args
+
+    from app.main import Region
+
+    assert set(get_args(Region)) == set(LAYOUTS)
+
+
 @pytest.mark.parametrize("region", ["france", "", "resume.tex.jinja", "../../etc/passwd"])
 def test_unknown_region_is_rejected_before_touching_the_filesystem(region):
     """The Jinja loader is pointed at the whole latex_templates/ directory, so resolving a

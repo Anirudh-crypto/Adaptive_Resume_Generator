@@ -30,8 +30,8 @@ given back — a Gemini outage costs you nothing.
 
 ### Regional layouts
 
-The same resume content renders through a different LaTeX layout depending on the selected region,
-because conventions differ by market:
+The resume renders through a different LaTeX layout depending on the selected region, because
+conventions differ by market:
 
 | Region | Template | Photo | Section order |
 | --- | --- | --- | --- |
@@ -40,8 +40,32 @@ because conventions differ by market:
 
 Layouts are declared in `LAYOUTS` in `app/latex_render.py`, and each one states whether it supports
 a photo — so a saved headshot is simply not fetched for a layout that has nowhere to put it. Adding
-a third region means adding a template plus one entry there, and a value to the `region` Literal on
-`GenerateRequest`.
+a third region means adding a template plus one entry there, a value to the `Region` Literal in
+`app/main.py` (a test asserts the two stay in sync), and a `prewarm_*.tex` in
+`scripts/warm_tectonic.sh`.
+
+### Per-region resume content
+
+Layout isn't the whole difference. Some *content* is genuinely regional too — an Indian application
+wants an Indian phone number and the graduating year written the Indian way — so the region also
+selects **which document** is tailored, not just which template renders it.
+
+- `resumes.markdown_text` is the **canonical** document. It is what the default region (Germany)
+  uses, and what the profile page opens on.
+- `resume_variants (user_id, region, markdown_text)` holds a region's own full document. Only
+  non-default regions ever get a row.
+- A region with no row of its own **falls back to the canonical document**. That's what makes a new
+  region purely additive: nothing is backfilled, and a user who never opens the India tab keeps
+  generating exactly as before.
+
+The profile page edits one document at a time, chosen by a radio group. Opening a region that has no
+document of its own shows the canonical text with a notice, so the first save is "edit the two lines
+that differ" rather than "write a second resume". **Reset to main resume** deletes the row and
+returns that region to the fallback. `GET /me/resume?region=` returns `is_variant` for exactly this
+distinction — "no India version yet" versus "an India version that happens to read the same".
+
+Deliberately, nothing downstream of loading the document knows about regions: the tailoring and
+cover-letter prompts are unchanged, and `Resume` gained no regional fields.
 
 Each layout has its own `prewarm_*.tex` compiled during the Docker build to warm Tectonic's package
 cache; the two preambles are different enough that they get separate files. Note the Indian template
@@ -54,7 +78,8 @@ Tectonic is a XeTeX engine.
 - **App**: FastAPI + vanilla HTML/JS (no frontend build step), deployable as a single container.
 - **Auth**: Google sign-in via Supabase Auth. The backend verifies session JWTs against Supabase's
   public JWKS endpoint (`app/auth.py`) — no shared secret to manage.
-- **Data**: Supabase Postgres (`resumes`, `generation_jobs`, `usage_counters` tables) + Supabase
+- **Data**: Supabase Postgres (`resumes`, `resume_variants`, `generation_jobs`, `generation_events`
+  tables) + Supabase
   Storage (`photo`, `resume-pdf` buckets — the latter holds every generated artifact, resume PDFs
   and cover letter `.docx` files alike), accessed server-side via the service_role key
   (`app/db.py`). Job/progress state lives in the database, not in-process memory, so it's correct

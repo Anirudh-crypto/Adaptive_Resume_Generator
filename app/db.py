@@ -7,6 +7,7 @@ import httpx
 from supabase import Client, ClientOptions, create_client
 
 from app.config import Settings
+from app.latex_render import DEFAULT_REGION
 
 _settings = Settings()
 
@@ -30,16 +31,72 @@ _client: Client = create_client(
 )
 
 
-def get_resume_markdown(user_id: str) -> str:
+def _get_canonical_markdown(user_id: str) -> str:
     resp = _client.table("resumes").select("markdown_text").eq("user_id", user_id).execute()
     if not resp.data:
         return ""
     return resp.data[0]["markdown_text"] or ""
 
 
-def save_resume_markdown(user_id: str, markdown_text: str) -> None:
-    _client.table("resumes").upsert(
-        {"user_id": user_id, "markdown_text": markdown_text}
+def get_resume_variant(user_id: str, region: str) -> str | None:
+    """The user's own document for `region`, or None if they never wrote one.
+
+    Deliberately does *not* fall back to the canonical resume: the profile editor has to be able to
+    tell "no India version yet" from "an India version that happens to read the same", because that
+    is the difference between showing the Reset button and not.
+    """
+    if region == DEFAULT_REGION:
+        return _get_canonical_markdown(user_id)
+    resp = (
+        _client.table("resume_variants")
+        .select("markdown_text")
+        .eq("user_id", user_id)
+        .eq("region", region)
+        .execute()
+    )
+    if not resp.data:
+        return None
+    return resp.data[0]["markdown_text"] or ""
+
+
+def get_resume_markdown(user_id: str, region: str = DEFAULT_REGION) -> str:
+    """The resume to generate from for `region`.
+
+    Falls back to the canonical document when the user has no variant for this region (or saved a
+    blank one), so turning on a new region never leaves an existing user unable to generate.
+    """
+    if region != DEFAULT_REGION:
+        variant = get_resume_variant(user_id, region)
+        if variant and variant.strip():
+            return variant
+    return _get_canonical_markdown(user_id)
+
+
+def save_resume_markdown(
+    user_id: str, markdown_text: str, region: str = DEFAULT_REGION
+) -> None:
+    if region == DEFAULT_REGION:
+        _client.table("resumes").upsert(
+            {"user_id": user_id, "markdown_text": markdown_text}
+        ).execute()
+        return
+    # resume_variants is keyed by (user_id, region); postgrest needs the composite key spelled out
+    # or it resolves the conflict target to the primary key's first column alone.
+    _client.table("resume_variants").upsert(
+        {
+            "user_id": user_id,
+            "region": region,
+            "markdown_text": markdown_text,
+            "updated_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        },
+        on_conflict="user_id,region",
+    ).execute()
+
+
+def delete_resume_variant(user_id: str, region: str) -> None:
+    """Drop a region's own document so it falls back to the canonical resume again."""
+    _client.table("resume_variants").delete().eq("user_id", user_id).eq(
+        "region", region
     ).execute()
 
 

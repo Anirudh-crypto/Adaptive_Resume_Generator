@@ -8,7 +8,7 @@ import pytest
 
 from app import main as app_main
 
-from .conftest import SAMPLE_RESUME_MD, TEST_USER
+from .conftest import OTHER_USER, SAMPLE_RESUME_MD, TEST_USER
 
 pytestmark = pytest.mark.integration
 
@@ -130,14 +130,18 @@ def test_malformed_authorization_headers_are_rejected(anon_client, header):
 
 
 def test_resume_round_trips(client, fake_db):
-    assert client.get("/me/resume").json() == {"markdown_text": ""}
+    assert client.get("/me/resume").json()["markdown_text"] == ""
 
     saved = client.post("/me/resume", json={"markdown_text": SAMPLE_RESUME_MD})
     assert saved.status_code == 200
     assert saved.json() == {"status": "saved"}
     assert fake_db.resumes[TEST_USER] == SAMPLE_RESUME_MD
 
-    assert client.get("/me/resume").json() == {"markdown_text": SAMPLE_RESUME_MD}
+    assert client.get("/me/resume").json() == {
+        "markdown_text": SAMPLE_RESUME_MD,
+        "region": "germany",
+        "is_variant": True,
+    }
 
 
 @pytest.mark.parametrize(
@@ -158,6 +162,88 @@ def test_saving_an_unparseable_resume_is_rejected(client, fake_db, markdown, rea
 
 def test_saving_a_resume_requires_the_field(client):
     assert client.post("/me/resume", json={}).status_code == 422
+
+
+# --- per-region resume documents -------------------------------------------------------------
+
+
+# What the user actually changes between regions: the phone number, and how the graduating year
+# is written.
+INDIA_RESUME_MD = SAMPLE_RESUME_MD.replace("(555) 123-4567", "+91 98765 43210").replace(
+    "Seattle, WA | 2018", "Seattle, WA | 2014 - 2018"
+)
+
+
+def test_a_region_without_its_own_document_falls_back_to_the_canonical_one(client):
+    """The whole reason a new region is safe to add: nothing has to be backfilled, and a user who
+    never opens the India tab still generates from the resume they already wrote."""
+    client.post("/me/resume", json={"markdown_text": SAMPLE_RESUME_MD})
+
+    body = client.get("/me/resume", params={"region": "india"}).json()
+    assert body["markdown_text"] == SAMPLE_RESUME_MD
+    assert body["is_variant"] is False
+
+
+def test_saving_a_region_document_leaves_the_canonical_one_alone(client, fake_db):
+    client.post("/me/resume", json={"markdown_text": SAMPLE_RESUME_MD})
+
+    saved = client.post(
+        "/me/resume", params={"region": "india"}, json={"markdown_text": INDIA_RESUME_MD}
+    )
+    assert saved.status_code == 200
+    assert fake_db.resume_variants[(TEST_USER, "india")] == INDIA_RESUME_MD
+    # The canonical document is untouched -- editing the India version must never edit the main one.
+    assert fake_db.resumes[TEST_USER] == SAMPLE_RESUME_MD
+
+    india = client.get("/me/resume", params={"region": "india"}).json()
+    assert india["markdown_text"] == INDIA_RESUME_MD
+    assert india["is_variant"] is True
+    assert client.get("/me/resume").json()["markdown_text"] == SAMPLE_RESUME_MD
+
+
+def test_deleting_a_region_document_restores_the_fallback(client):
+    client.post("/me/resume", json={"markdown_text": SAMPLE_RESUME_MD})
+    client.post("/me/resume", params={"region": "india"}, json={"markdown_text": INDIA_RESUME_MD})
+
+    deleted = client.delete("/me/resume", params={"region": "india"})
+    assert deleted.status_code == 200
+
+    body = client.get("/me/resume", params={"region": "india"}).json()
+    assert body["markdown_text"] == SAMPLE_RESUME_MD
+    assert body["is_variant"] is False
+
+
+def test_the_canonical_resume_cannot_be_deleted(client, fake_db):
+    """There is nothing to fall back *to*, so this would silently wipe the user's only resume."""
+    client.post("/me/resume", json={"markdown_text": SAMPLE_RESUME_MD})
+
+    response = client.delete("/me/resume", params={"region": "germany"})
+    assert response.status_code == 400
+    assert "error" in response.json()
+    assert fake_db.resumes[TEST_USER] == SAMPLE_RESUME_MD
+
+
+def test_an_unparseable_region_document_is_rejected(client, fake_db):
+    response = client.post(
+        "/me/resume", params={"region": "india"}, json={"markdown_text": "no heading here"}
+    )
+    assert response.status_code == 400
+    assert (TEST_USER, "india") not in fake_db.resume_variants
+
+
+def test_region_documents_are_scoped_to_their_owner(client, fake_db):
+    client.post("/me/resume", params={"region": "india"}, json={"markdown_text": INDIA_RESUME_MD})
+    assert fake_db.get_resume_variant(OTHER_USER, "india") is None
+    assert fake_db.get_resume_markdown(OTHER_USER, "india") == ""
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+@pytest.mark.parametrize("region", ["france", "", "resume.tex.jinja", "../../etc/passwd"])
+def test_resume_routes_reject_an_unknown_region(client, method, region):
+    response = client.request(
+        method, "/me/resume", params={"region": region}, json={"markdown_text": SAMPLE_RESUME_MD}
+    )
+    assert response.status_code == 422
 
 
 # --- photo ---------------------------------------------------------------------------------
